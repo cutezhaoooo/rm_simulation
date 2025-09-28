@@ -22,6 +22,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+rclcpp::Node::SharedPtr nh;
+
 const double PI = 3.1415926;
 
 double noDecayDis = 4.0;
@@ -35,6 +37,10 @@ float sinVehicleRoll = 0, cosVehicleRoll = 0;
 float sinVehiclePitch = 0, cosVehiclePitch = 0;
 float sinVehicleYaw = 0, cosVehicleYaw = 0;
 
+int minDyObsPointNum = 1;
+bool considerDrop = false;
+
+
 float terrainVoxelSize = 1.0;
 int terrainVoxelShiftX = 0;
 int terrainVoxelShiftY = 0;
@@ -42,7 +48,12 @@ const int terrainVoxelWidth = 21;
 int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 double voxelTimeUpdateThre = 2.0;
+int minBlockPointNum = 10;
 
+
+bool clearDyObs = false;
+bool limitGroundLift = false;
+double vehicleHeight = 1.5;
 
 
 // HACK 状态机的参数??
@@ -57,10 +68,20 @@ bool systemInited = false;
 double minRelZ = -1.5;
 double maxRelZ = 0.2;
 double disRatioZ = 0.2;
-int voxelPointUpdateThre = 100;
+double voxelPointUpdateThre = 100.0;
 bool clearingCloud = false;
 double clearingDis = 8.0;
 
+float planarVoxelSize = 0.2;
+const int planarVoxelWidth = 51;
+int planarVoxelHalfWidth = (planarVoxelWidth - 1)/2;
+const int planarVoxelNum = planarVoxelWidth * planarVoxelWidth;
+bool noDataObstacle = false;
+int noDataBlockSkipNum = 0;
+
+bool useSorting = true;
+
+bool quantileZ = 0.25;
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr
     laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
@@ -76,9 +97,16 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr terrainVoxelCloud[terrainVoxelNum];
 
 pcl::VoxelGrid<pcl::PointXYZI> downSizeFilter;
 
-
 int terrainVoxelUpdateNum[terrainVoxelNum] = {0};
 float terrainVoxelUpdateTime[terrainVoxelNum] = {0};
+// 一维数组
+float planarVoxelElev[planarVoxelNum] = {0};
+int planarVoxelEdge[planarVoxelNum] = {0};
+int planarVoxelDyObs[planarVoxelNum] = {0};
+// planarPointElev不是一个一维数组 而是外层是一个数组 里面每个元素是std::vector<float>用于存放z值
+std::vector<float> planarPointElev[planarVoxelNum];
+
+double maxGroundLift = 0.15;
 
 void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
 {
@@ -135,6 +163,9 @@ void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 // registered laser scan callback function
 void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
 {
+    // laser的frame id 
+    // RCLCPP_INFO() laserCloud2->header.frame_id.c_str()
+    // RCLCPP_INFO(nh->get_logger(),"雷达的frame id : %s",laserCloud2->header.frame_id.c_str());
     laserCloudTime = rclcpp::Time(laserCloud2->header.stamp).seconds();
     if (!systemInited)
     {
@@ -159,6 +190,8 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
 
         float dis = sqrt((pointX - vehicleX) * (pointX - vehicleX) +
                          (pointY - vehicleY) * (pointY - vehicleY));
+        // laserCloudCrop只保存一定高度的点 
+        // 后面terrainVoxelCloud的点来自于laserCloudCrop
         if (pointZ - vehicleZ > minRelZ - disRatioZ * dis &&
             pointZ - vehicleZ < maxRelZ + disRatioZ * dis &&
             dis < terrainVoxelSize * (terrainVoxelHalfWidth + 1)) {
@@ -177,7 +210,8 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
 int main(int argc, char **argv)
 {
     rclcpp::init(argc,argv);
-    auto nh = rclcpp::Node::make_shared("terrainAnalysis");
+    nh = rclcpp::Node::make_shared("terrainAnalysis");
+
 
     nh->declare_parameter<double>("scanVoxelSize",scanVoxelSize);
     nh->declare_parameter<double>("voxelPointUpdateThre",voxelPointUpdateThre);
@@ -196,8 +230,22 @@ int main(int argc, char **argv)
 
     auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/terrain_map",2);
 
+    auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("registered_scan",5,laserCloudHandler);
+
+    // ========================= test ========================
+    
+    auto pubRefreshCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("refresh_cloud",2);
+    
+    // 发布机器人中心的点云
+    auto pubCenterCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("center_cloud",2);
+
+    auto pubterrainCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("center_cloud",2);
+    
+    // ========================= test ========================
+    
+    
     // 对terrainVoxelCloud初始化
-    for (int i = 0; i < terrainVoxelSize ;i++)
+    for (int i = 0; i < terrainVoxelNum ;i++)
     {
         terrainVoxelCloud[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
     }
@@ -208,9 +256,11 @@ int main(int argc, char **argv)
     bool status = rclcpp::ok();
     while (status)
     {
+        // RCLCPP_INFO(nh->get_logger(), "newlaserCloud value: %s", newlaserCloud ? "true" : "false");
         rclcpp::spin_some(nh);
         if (newlaserCloud)
         {
+            RCLCPP_INFO(nh->get_logger(),"new cloud");
             newlaserCloud = false;
 
             // 获取当前地图中心坐标
@@ -379,6 +429,15 @@ int main(int argc, char **argv)
                         }
                     }
 
+                    //TAG测试 把terrainVoxelCloudPtr转成ros格式
+                    // ================================   =========================================
+                    // pcl::fromROSMsg
+                    sensor_msgs::msg::PointCloud2 refreshCloud;
+                    pcl::toROSMsg(*terrainVoxelCloudPtr,refreshCloud);
+                    refreshCloud.header.stamp = nh->get_clock()->now();
+                    refreshCloud.header.frame_id = "camera_init";
+                    pubRefreshCloud->publish(refreshCloud);
+
                     terrainVoxelUpdateNum[ind] = 0;
                     terrainVoxelUpdateTime[ind] = laserCloudTime - systemInitTime;
 
@@ -386,17 +445,280 @@ int main(int argc, char **argv)
                 
             }
             
+            terrainCloud->clear();
+            // 提取机器人中心的 11 * 11点云
+            for (int indX = terrainVoxelHalfWidth - 5; indX <= terrainVoxelHalfWidth + 5; indX++)
+            {
+                for (int indY = terrainVoxelHalfWidth - 5; indY <= terrainVoxelHalfWidth; indY++)
+                {
+                    *terrainCloud += *terrainVoxelCloud[terrainVoxelWidth * indX + indY];
+                }
+            }
+            // TAG测试
+            sensor_msgs::msg::PointCloud2 centerCloud;
+            pcl::toROSMsg(*terrainCloud,centerCloud);
+            centerCloud.header.frame_id = "camera_init";
+            centerCloud.header.stamp = nh->get_clock()->now();
+            pubCenterCloud->publish(centerCloud);
+            
+            // estimate ground and compute elevation for each point
+            for (int i = 0; i < planarVoxelNum; i++)
+            {
+                planarVoxelElev[i] = 0;
+                planarVoxelEdge[i] = 0;
+                planarVoxelDyObs[i] = 0;
+                planarPointElev[i].clear();
+            }
+            
+            // 遍历terrainCloud点云
+            int terrainCloudSize = terrainCloud->points.size();
+            for (int i = 0; i < terrainCloudSize; i++)
+            {
+                point = terrainCloud->points[i];
+                
+                int indX =
+                    int((point.x - vehicleX + planarVoxelSize / 2) / planarVoxelSize) +
+                    planarVoxelHalfWidth;
+                int indY =
+                    int((point.y - vehicleY + planarVoxelSize / 2) / planarVoxelSize) +
+                    planarVoxelHalfWidth;
+
+                if (point.x - vehicleX + planarVoxelSize/2 < 0)
+                {
+                    indX--;
+                }
+                if (point.y - vehicleY + planarVoxelSize/2 < 0)
+                {
+                    indY--;
+                }
+
+                // 只考虑相对车辆高度在(minRelZ,maxRelZ)范围内的点
+                if (point.z - vehicleZ > minRelZ && point.z - vehicleZ < maxRelZ)
+                {
+                    for (int dX = -1; dX <=1; dX++)
+                    {
+                        for (int dY = -1; dY <=1; dY++)
+                        {
+                            if (indX + dX >= 0 && indX + dX < planarVoxelWidth &&
+                                indY + dY >= 0 && indY + dY < planarVoxelWidth)
+                            {
+                                // 将选中点的八邻域也添加进来
+                                // 采集候选的z值
+                                // 这里将二维索引转成一维索引
+                                planarPointElev[planarVoxelWidth * (indX + dX) + indY + dY].push_back(point.z);
+                            }
+                            
+                        }
+                        
+                    }
+                }
+
+                // 是否启用障碍物清除
+                if (clearDyObs)
+                {
+                    // TODO后续补充障碍物清除的逻辑
+
+                    /* code */
+                }
+            
+            }
+
+            // TODO后续补充障碍物清除的逻辑
+            if (clearDyObs)
+            {
+                /* code */
+            }
+            
+            // 两种地面估计的方法
+            if (useSorting) 
+            {
+                // 这里的planarVoxelNum就是网格的面积
+                for (int i = 0; i < planarVoxelNum; i++) 
+                {
+                    int planarPointElevSize = planarPointElev[i].size();
+
+                    if (planarPointElevSize > 0) 
+                    {
+                        // 对voxel内的点云z值进行排序
+                        sort(planarPointElev[i].begin(), planarPointElev[i].end());
+                        // 找到对应的分位点quantileID 
+                        // 如果分位点quantileID 过低就取第一个
+                        int quantileID = int(quantileZ * planarPointElevSize);
+                        if (quantileID < 0)
+                        {
+                            quantileID = 0;
+                        }
+                        // 过大就取最后一个
+                        else if (quantileID >= planarPointElevSize)
+                        {
+                            quantileID = planarPointElevSize - 1;
+                        }
+
+                        // planarPointElev[i][quantileID]体素内的某个分位数高度
+                        // planarPointElev[i][0]最低的z值
+                        // planarPointElev是std::vector<float> 类型
+                        if (planarPointElev[i][quantileID] >
+                                planarPointElev[i][0] + maxGroundLift &&
+                            limitGroundLift) 
+                        {
+                            planarVoxelElev[i] = planarPointElev[i][0] + maxGroundLift;
+                        } else {
+                            planarVoxelElev[i] = planarPointElev[i][quantileID];
+                        }
+                    }
+                }
+            } else {
+                // 最小值法 找到最小值z 认为最低的点就是地面
+                for (int i = 0; i < planarVoxelNum; i++) {
+                int planarPointElevSize = planarPointElev[i].size();
+                if (planarPointElevSize > 0) {
+                    float minZ = 1000.0;
+                    int minID = -1;
+                    for (int j = 0; j < planarPointElevSize; j++) {
+                    if (planarPointElev[i][j] < minZ) {
+                        minZ = planarPointElev[i][j];
+                        minID = j;
+                    }
+                    }
+
+                    if (minID != -1) {
+                    planarVoxelElev[i] = planarPointElev[i][minID];
+                    }
+                }
+                }
+            }
+
+
+            terrainCloudElev->clear();
+            int terrainCloudElevSize = 0;
+            for (int i = 0; i < terrainCloudSize; i++) 
+            {
+                point = terrainCloud->points[i];
+                // 保留高度一定的点
+                if (point.z - vehicleZ > minRelZ && point.z - vehicleZ < maxRelZ) 
+                {
+                    int indX = int((point.x - vehicleX + planarVoxelSize / 2) /
+                                    planarVoxelSize) +
+                                planarVoxelHalfWidth;
+                    int indY = int((point.y - vehicleY + planarVoxelSize / 2) /
+                                    planarVoxelSize) +
+                                planarVoxelHalfWidth;
+
+                    if (point.x - vehicleX + planarVoxelSize / 2 < 0)
+                        indX--;
+                    if (point.y - vehicleY + planarVoxelSize / 2 < 0)
+                        indY--;
+
+                    // 有效点
+                    if (indX >= 0 && indX < planarVoxelWidth && indY >= 0 &&
+                        indY < planarVoxelWidth) 
+                    {
+                        if (planarVoxelDyObs[planarVoxelWidth * indX + indY] <
+                                minDyObsPointNum ||
+                            !clearDyObs) 
+                        {
+                            // 
+                            float disZ = point.z - planarVoxelElev[planarVoxelWidth * indX + indY];
+                            if (considerDrop)
+                            {
+                                disZ = fabs(disZ);
+                            }
+                            int planarPointElevSize = planarPointElev[planarVoxelWidth * indX + indY].size();
+                            if (disZ >= 0 && disZ < vehicleHeight &&
+                                planarPointElevSize >= minBlockPointNum) 
+                            {
+                                terrainCloudElev->push_back(point);
+                                // 将intensity重写成高度
+                                terrainCloudElev->points[terrainCloudElevSize].intensity = disZ;
+                                terrainCloudElevSize++;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // 将雷达看不到地方标记为障碍物
+            // HACK没有细看
+            if (noDataObstacle && noDataInited == 2) {
+                for (int i = 0; i < planarVoxelNum; i++) {
+                int planarPointElevSize = planarPointElev[i].size();
+                if (planarPointElevSize < minBlockPointNum) {
+                    planarVoxelEdge[i] = 1;
+                }
+                }
+
+                for (int noDataBlockSkipCount = 0;
+                    noDataBlockSkipCount < noDataBlockSkipNum;
+                    noDataBlockSkipCount++) {
+                for (int i = 0; i < planarVoxelNum; i++) {
+                    if (planarVoxelEdge[i] >= 1) {
+                    int indX = int(i / planarVoxelWidth);
+                    int indY = i % planarVoxelWidth;
+                    bool edgeVoxel = false;
+                    for (int dX = -1; dX <= 1; dX++) {
+                        for (int dY = -1; dY <= 1; dY++) {
+                        if (indX + dX >= 0 && indX + dX < planarVoxelWidth &&
+                            indY + dY >= 0 && indY + dY < planarVoxelWidth) {
+                            if (planarVoxelEdge[planarVoxelWidth * (indX + dX) + indY +
+                                                dY] < planarVoxelEdge[i]) {
+                            edgeVoxel = true;
+                            }
+                        }
+                        }
+                    }
+
+                    if (!edgeVoxel)
+                        planarVoxelEdge[i]++;
+                    }
+                }
+                }
+
+                for (int i = 0; i < planarVoxelNum; i++) {
+                    if (planarVoxelEdge[i] > noDataBlockSkipNum) {
+                        int indX = int(i / planarVoxelWidth);
+                        int indY = i % planarVoxelWidth;
+
+                        point.x =
+                            planarVoxelSize * (indX - planarVoxelHalfWidth) + vehicleX;
+                        point.y =
+                            planarVoxelSize * (indY - planarVoxelHalfWidth) + vehicleY;
+                        point.z = vehicleZ;
+                        point.intensity = vehicleHeight;
+
+                        point.x -= planarVoxelSize / 4.0;
+                        point.y -= planarVoxelSize / 4.0;
+                        terrainCloudElev->push_back(point);
+
+                        point.x += planarVoxelSize / 2.0;
+                        terrainCloudElev->push_back(point);
+
+                        point.y += planarVoxelSize / 2.0;
+                        terrainCloudElev->push_back(point);
+
+                        point.x -= planarVoxelSize / 2.0;
+                        terrainCloudElev->push_back(point);
+                    }
+                }
+            }
+
+            clearingCloud = false;
+
+            // publish points with elevation
+            sensor_msgs::msg::PointCloud2 terrainCloud2;
+            pcl::toROSMsg(*terrainCloudElev, terrainCloud2);
+            terrainCloud2.header.stamp = rclcpp::Time(static_cast<uint64_t>(laserCloudTime * 1e9));
+            terrainCloud2.header.frame_id = "camera_init";
+            pubLaserCloud->publish(terrainCloud2);
             
 
 
-
         }
-        
-        
+
+        status = rclcpp::ok();
+        rate.sleep();
     }
     
     
-
     return 0;
 }
 
