@@ -79,7 +79,9 @@ void WaypointTool::onPoseSet(double x, double y, double theta)
   pub_joy_->publish(joy);
 
   geometry_msgs::msg::PointStamped waypoint;
-  waypoint.header.frame_id = "map";
+  // NOTE:这里改成了 camera_init
+  // waypoint.header.frame_id = "map";
+  waypoint.header.frame_id = "camera_init";
   waypoint.header.stamp = joy.header.stamp;
   waypoint.point.x = x;
   waypoint.point.y = y;

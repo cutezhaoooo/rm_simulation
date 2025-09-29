@@ -260,7 +260,7 @@ int main(int argc, char **argv)
         rclcpp::spin_some(nh);
         if (newlaserCloud)
         {
-            RCLCPP_INFO(nh->get_logger(),"new cloud");
+            // RCLCPP_INFO(nh->get_logger(),"new cloud");
             newlaserCloud = false;
 
             // 获取当前地图中心坐标

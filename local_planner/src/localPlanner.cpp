@@ -31,6 +31,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 
+const double PI = 3.1415926;
+
 double vehicleLength = 0.6;
 double vehicleWidth = 0.6;
 double sensorOffsetX = 0;
@@ -136,8 +138,8 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     vehicleYaw = yaw;
 
     // 都是根据odom的值来更新vehicleX的位置??
-    vehicleX = odom->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
-    vehicleY = odom->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
+    vehicleX = odom->pose.pose.position.x;
+    vehicleY = odom->pose.pose.position.y;
     // 打印 vehicleX 和 vehicleY的值
     // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
     vehicleZ = odom->pose.pose.position.z;
@@ -231,7 +233,9 @@ void boundaryHandle(const geometry_msgs::msg::PolygonStamped::ConstSharedPtr bou
 void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
 {
     std::string frame_id = goal->header.frame_id;
-    RCLCPP_INFO(nh->get_logger(),"目标点的frame id是 %s",frame_id.c_str());
+    // RCLCPP_INFO(nh->get_logger(),"目标点的frame id是 %s",frame_id.c_str());
+    goalX = goal->point.x;
+    goalY = goal->point.y;
 }
 
 int main(int argc, char** argv)
@@ -248,14 +252,14 @@ int main(int argc, char** argv)
     auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
 
     auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
-    auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud2",5);
+    auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
 
     auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map",5,terrainCloudHandler);
 
     auto subBoundary = nh->create_subscription<geometry_msgs::msg::PolygonStamped>("/navigation_boundary",5,boundaryHandle);
 
     // NOTE:local planner中订阅的话题是way_point
-    auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/goal_pose",5,goalHandler);
+    auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
 
     laserDwzFilter.setLeafSize(laserVoxelSize, laserVoxelSize, laserVoxelSize);
     terrainDwzFilter.setLeafSize(terrainVoxelSize, terrainVoxelSize, terrainVoxelSize);
@@ -329,6 +333,7 @@ int main(int argc, char** argv)
 
                 float dis = sqrt(point.x * point.x + point.y * point.y);
                 if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
+
                     plannerCloudCrop->push_back(point);
                 }
 
@@ -336,11 +341,11 @@ int main(int argc, char** argv)
 
             // 将plannerCloud显示出来看一看
             // plannerCloud
-            // sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-            // pcl::toROSMsg(*plannerCloud,plannerCloudMsg);
-            // plannerCloudMsg.header.stamp = nh->get_clock()->now();
-            // plannerCloudMsg.header.frame_id = "camera_init";
-            // pubLaserCloud2->publish(plannerCloudMsg);
+            sensor_msgs::msg::PointCloud2 plannerCloudMsg;
+            pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
+            plannerCloudMsg.header.stamp = nh->get_clock()->now();
+            plannerCloudMsg.header.frame_id = "camera_init";
+            pubLaserCloud2->publish(plannerCloudMsg);
 
             // int boundaryCloudSize = boundaryCloud->
 
@@ -356,9 +361,57 @@ int main(int argc, char** argv)
             float relativeGoalDis = adjacentRange;
             
             // TODO计算目标角度和距离
-            if (autonomyMode)
+            // if (autonomyMode)
+            if (true)
             {
+                // 直接用vehicleX和vehicleY去计算即可
+                float relativeGoalX = (goalX - vehicleX) * (goalX - vehicleX);  // x^2
+                float relativeGoalY = (goalY - vehicleY) * (goalY - vehicleY);  // y^2
+
+                relativeGoalDis = std::sqrt(relativeGoalX + relativeGoalY );
+                joyDir = std::atan2(relativeGoalY,relativeGoalX) * 180/PI;
+                // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
+                // RCLCPP_INFO(nh->get_logger(),"goalX :%f , goalY :%f",goalX,goalY);
                 
+
+                // RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的距离:%f",relativeGoalDis);
+                // RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的方向角:%f",joyDir);
+            }
+            
+            bool pathFound = false;
+            float defPathScale = pathScale;
+            // 没有理会这里是什么意思
+            if (pathScaleBySpeed)
+            {
+                pathScale = defPathScale * joySpeed;
+
+            }
+            if (pathScale < minPathScale)
+            {
+                pathScale = minPathScale;
+            }
+
+            while (pathScale >= minPathScale && pathRange >= minPathRange) {
+                // 清空之前的评分器
+                for (int i = 0; i < 36 * pathNum; i++) 
+                {
+                    clearPathList[i] = 0;
+                    pathPenaltyList[i] = 0;
+                }
+                for (int i = 0; i < 36 * groupNum; i++) 
+                {
+                    clearPathPerGroupScore[i] = 0;
+                }
+
+                float minObsAngCW = -180.0;
+                float minObsAngCCW = 180.0;
+                float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
+                float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
+                // 遍历障碍物判断哪些路径会被阻挡
+                // BUG这里大概率没有点云需要检查
+                int plannerCloudCropSize = plannerCloudCrop->points.size();
+
+
             }
             
 
