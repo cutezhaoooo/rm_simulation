@@ -12,7 +12,8 @@
   <arg name="goalY" default="0.0"/>
 
   <node pkg="local_planner" exec="localPlanner" name="localPlanner" output="screen">
-    <param name="pathFolder" value="$(find-pkg-share local_planner)/paths" />
+  <!-- TODO:暂时将参数都注释掉 后面再补充 -->
+    <!-- <param name="pathFolder" value="$(find-pkg-share local_planner)/paths" />
     <param name="vehicleLength" value="0.6" />
     <param name="vehicleWidth" value="0.6" />
     <param name="sensorOffsetX" value="$(var sensorOffsetX)" />
@@ -50,9 +51,9 @@
     <param name="joyToCheckObstacleDelay" value="5.0" />
     <param name="goalClearRange" value="0.5" />
     <param name="goalX" value="$(var goalX)" />
-    <param name="goalY" value="$(var goalY)" />
+    <param name="goalY" value="$(var goalY)" /> -->
   </node>
-
+  
   <!-- <node pkg="local_planner" exec="pathFollower" name="pathFollower" output="screen">
     <param name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <param name="sensorOffsetY" value="$(var sensorOffsetY)" />

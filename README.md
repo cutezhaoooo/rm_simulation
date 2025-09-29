@@ -3,3 +3,5 @@ ros2 service call /map_save std_srvs/srv/Trigger
 
 <!-- 运动控制节点 -->
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/cmd_vel_chassis
+
+ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml

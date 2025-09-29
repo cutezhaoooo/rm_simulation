@@ -40,7 +40,7 @@ def generate_launch_description():
 
     start_vehicle_simulator = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
-        get_package_share_directory('vehicle_simulator'), 'launch', 'vehicle_simulator.launch')
+        get_package_share_directory('vehicle_simulator'), 'launch', 'vehicle_simulator.launch.py')
         ),
         launch_arguments={
         # 'world_name': world_name,
@@ -65,11 +65,11 @@ def generate_launch_description():
         FrontendLaunchDescriptionSource(os.path.join(
         get_package_share_directory('local_planner'), 'launch', 'local_planner.launch')
         ),
-        launch_arguments={
-        'cameraOffsetZ': cameraOffsetZ,
-        'goalX': vehicleX,
-        'goalY': vehicleY,
-        }.items()
+        # launch_arguments={
+        # 'cameraOffsetZ': cameraOffsetZ,
+        # 'goalX': vehicleX,
+        # 'goalY': vehicleY,
+        # }.items()
     )
 
     # HACK目前没看出来 terrain_analysis_ext 与 terrain_analysis 有什么区别

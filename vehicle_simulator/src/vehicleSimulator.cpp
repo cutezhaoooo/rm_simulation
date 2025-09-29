@@ -104,7 +104,7 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     double vehicleX = odom->pose.pose.position.x;
     double vehicleY = odom->pose.pose.position.y;
     // double vehicleZ = odom->pose.pose.position.z;
-    RCLCPP_INFO(nh->get_logger(),"vehicleX:%f , vehicleY :%f",vehicleX,vehicleY);
+    // RCLCPP_INFO(nh->get_logger(),"vehicleX:%f , vehicleY :%f",vehicleX,vehicleY);
 }
 
 void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
