@@ -96,7 +96,9 @@ float pathPenaltyList[36 * pathNum] = {0};
 float clearPathPerGroupScore[36 * groupNum] = {0};
 std::vector<int> correspondences[gridVoxelNum];
 
-bool newLaserCloud = false;
+bool newlaserCloud = false;
+
+
 bool newTerrainCloud = false;
 
 double odomTime = 0;
@@ -148,8 +150,10 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 
 void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
 {
+    RCLCPP_INFO(nh->get_logger(),"laserCloudHandler");
     if (!useTerrainAnalysis)
     {
+        RCLCPP_INFO(nh->get_logger(),"laserCloudHandler useTerrainAnalysis");
         // 不走地形分析
         laserCloud->clear();
         // 转成pcl格式
@@ -184,7 +188,7 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
         // 降采样结果保存在laserCloudDwz中
         laserDwzFilter.filter(*laserCloudDWZ);
 
-        newLaserCloud = true;
+        newlaserCloud = true;
     }
 }
 
@@ -266,27 +270,32 @@ int main(int argc, char** argv)
 
     RCLCPP_INFO(nh->get_logger(),"Initialization complete.");
 
-    rclcpp::Rate rate(100);
-    bool status = rclcpp::ok();
-
+    
     // 重置laserCloudStack
     for (int i = 0; i < laserCloudStackNum; i++)
     {
         laserCloudStack[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
     }
     
+    rclcpp::Rate rate(100);
+    bool status = rclcpp::ok();
     // TAG设置点云发布的频率
     // rclcpp::Rate rate(50);
     while (status)
     {
+        RCLCPP_INFO(nh->get_logger(),"while ok");
         rclcpp::spin_some(nh);
+        // rclcpp::spin(nh);
         
-        // 先看看有新点云的情况 有新的newLaserCloud 或者 newTerrainCloud都会进入然后分别处理
-        if (newLaserCloud || newTerrainCloud)
+        
+        // 先看看有新点云的情况 有新的newlaserCloud 或者 newTerrainCloud都会进入然后分别处理
+        RCLCPP_INFO(nh->get_logger(),"newlaserCloud :%d",newlaserCloud);
+        if (newlaserCloud || newTerrainCloud)
         {
-            if (newLaserCloud )
+            if (newlaserCloud)
             {
-                newLaserCloud = false;
+                RCLCPP_INFO(nh->get_logger(),"new laser cloud");
+                newlaserCloud = false;
     
                 // laserCloudStack是个长度为1的点云数组
                 laserCloudStack[laserCloudCount]->clear();
@@ -312,6 +321,7 @@ int main(int argc, char** argv)
 
             if (newTerrainCloud)
             {
+                RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
                 newTerrainCloud = false;
 
                 plannerCloud->clear();
@@ -342,7 +352,7 @@ int main(int argc, char** argv)
             // 将plannerCloud显示出来看一看
             // plannerCloud
             sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-            pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
+            pcl::toROSMsg(*plannerCloud,plannerCloudMsg);
             plannerCloudMsg.header.stamp = nh->get_clock()->now();
             plannerCloudMsg.header.frame_id = "camera_init";
             pubLaserCloud2->publish(plannerCloudMsg);
@@ -391,36 +401,37 @@ int main(int argc, char** argv)
                 pathScale = minPathScale;
             }
 
-            while (pathScale >= minPathScale && pathRange >= minPathRange) {
-                // 清空之前的评分器
-                for (int i = 0; i < 36 * pathNum; i++) 
-                {
-                    clearPathList[i] = 0;
-                    pathPenaltyList[i] = 0;
-                }
-                for (int i = 0; i < 36 * groupNum; i++) 
-                {
-                    clearPathPerGroupScore[i] = 0;
-                }
+            // while (pathScale >= minPathScale && pathRange >= minPathRange) {
+            //     // 清空之前的评分器
+            //     for (int i = 0; i < 36 * pathNum; i++) 
+            //     {
+            //         clearPathList[i] = 0;
+            //         pathPenaltyList[i] = 0;
+            //     }
+            //     for (int i = 0; i < 36 * groupNum; i++) 
+            //     {
+            //         clearPathPerGroupScore[i] = 0;
+            //     }
 
-                float minObsAngCW = -180.0;
-                float minObsAngCCW = 180.0;
-                float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
-                float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
-                // 遍历障碍物判断哪些路径会被阻挡
-                // BUG这里大概率没有点云需要检查
-                int plannerCloudCropSize = plannerCloudCrop->points.size();
+            //     float minObsAngCW = -180.0;
+            //     float minObsAngCCW = 180.0;
+            //     float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
+            //     float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
+            //     // 遍历障碍物判断哪些路径会被阻挡
+            //     // BUG这里大概率没有点云需要检查
+            //     int plannerCloudCropSize = plannerCloudCrop->points.size();
 
 
-            }
+            // }
             
 
         }
         
+        status = rclcpp::ok();
         rate.sleep();
     }
     
-    rclcpp::shutdown();
+    // rclcpp::shutdown();
     return 0;
 }
 

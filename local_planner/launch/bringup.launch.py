@@ -61,16 +61,16 @@ def generate_launch_description():
     )
 
 
-    start_local_planner = IncludeLaunchDescription(
-        FrontendLaunchDescriptionSource(os.path.join(
-        get_package_share_directory('local_planner'), 'launch', 'local_planner.launch')
-        ),
+    # start_local_planner = IncludeLaunchDescription(
+    #     FrontendLaunchDescriptionSource(os.path.join(
+    #     get_package_share_directory('local_planner'), 'launch', 'local_planner.launch')
+    #     ),
         # launch_arguments={
         # 'cameraOffsetZ': cameraOffsetZ,
         # 'goalX': vehicleX,
         # 'goalY': vehicleY,
         # }.items()
-    )
+    # )
 
     # HACK目前没看出来 terrain_analysis_ext 与 terrain_analysis 有什么区别
     # start_terrain_analysis_ext = IncludeLaunchDescription(
@@ -140,7 +140,7 @@ def generate_launch_description():
     ld.add_action(declare_checkTerrainConn)
 
     ld.add_action(start_tf)
-    ld.add_action(start_local_planner)
+    # ld.add_action(start_local_planner)
     ld.add_action(start_terrain_analysis)
     # ld.add_action(start_terrain_analysis_ext)
     ld.add_action(start_vehicle_simulator)

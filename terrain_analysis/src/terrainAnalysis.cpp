@@ -48,7 +48,7 @@ const int terrainVoxelWidth = 21;
 int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 double voxelTimeUpdateThre = 2.0;
-int minBlockPointNum = 10;
+int minBlockPointNum = 10;  // 
 
 
 bool clearDyObs = false;
@@ -239,7 +239,6 @@ int main(int argc, char **argv)
     // 发布机器人中心的点云
     auto pubCenterCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("center_cloud",2);
 
-    auto pubterrainCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("center_cloud",2);
     
     // ========================= test ========================
     
@@ -641,36 +640,39 @@ int main(int argc, char **argv)
             // HACK没有细看
             if (noDataObstacle && noDataInited == 2) {
                 for (int i = 0; i < planarVoxelNum; i++) {
-                int planarPointElevSize = planarPointElev[i].size();
-                if (planarPointElevSize < minBlockPointNum) {
-                    planarVoxelEdge[i] = 1;
-                }
+                    int planarPointElevSize = planarPointElev[i].size();
+                    if (planarPointElevSize < minBlockPointNum) {
+                        planarVoxelEdge[i] = 1; // 点太少 认为格子无效
+                    }
                 }
 
-                for (int noDataBlockSkipCount = 0;
-                    noDataBlockSkipCount < noDataBlockSkipNum;
-                    noDataBlockSkipCount++) {
-                for (int i = 0; i < planarVoxelNum; i++) {
-                    if (planarVoxelEdge[i] >= 1) {
-                    int indX = int(i / planarVoxelWidth);
-                    int indY = i % planarVoxelWidth;
-                    bool edgeVoxel = false;
-                    for (int dX = -1; dX <= 1; dX++) {
-                        for (int dY = -1; dY <= 1; dY++) {
-                        if (indX + dX >= 0 && indX + dX < planarVoxelWidth &&
-                            indY + dY >= 0 && indY + dY < planarVoxelWidth) {
-                            if (planarVoxelEdge[planarVoxelWidth * (indX + dX) + indY +
-                                                dY] < planarVoxelEdge[i]) {
-                            edgeVoxel = true;
+                for (int noDataBlockSkipCount = 0;noDataBlockSkipCount < noDataBlockSkipNum;noDataBlockSkipCount++) {
+                    for (int i = 0; i < planarVoxelNum; i++) 
+                    {
+                        if (planarVoxelEdge[i] >= 1) 
+                        {
+                            int indX = int(i / planarVoxelWidth);
+                            int indY = i % planarVoxelWidth;
+                            bool edgeVoxel = false;
+                            for (int dX = -1; dX <= 1; dX++) {
+                                for (int dY = -1; dY <= 1; dY++) 
+                                {
+                                    if (indX + dX >= 0 && indX + dX < planarVoxelWidth &&
+                                        indY + dY >= 0 && indY + dY < planarVoxelWidth) {
+                                        if (planarVoxelEdge[planarVoxelWidth * (indX + dX) + indY +
+                                                            dY] < planarVoxelEdge[i]) {
+                                        edgeVoxel = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            if (!edgeVoxel)
+                            {
+                                planarVoxelEdge[i]++;
                             }
                         }
-                        }
                     }
-
-                    if (!edgeVoxel)
-                        planarVoxelEdge[i]++;
-                    }
-                }
                 }
 
                 for (int i = 0; i < planarVoxelNum; i++) {
@@ -710,7 +712,6 @@ int main(int argc, char **argv)
             terrainCloud2.header.frame_id = "camera_init";
             pubLaserCloud->publish(terrainCloud2);
             
-
 
         }
 

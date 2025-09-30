@@ -1,0 +1,3 @@
+[submodule "far_planner"]
+	path = far_planner
+	url = https://github.com/MichaelFYang/far_planner.git
