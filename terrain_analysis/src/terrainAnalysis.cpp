@@ -226,7 +226,7 @@ int main(int argc, char **argv)
 
     // 订阅odom 这里通过fast lio提供odom Odometry
     // NOTE原来的代码里面是state_estimation 
-    auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("Odometry",5,odometryHandler);
+    auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandler);
 
     auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/terrain_map",2);
 
@@ -435,7 +435,7 @@ int main(int argc, char **argv)
                     pcl::toROSMsg(*terrainVoxelCloudPtr,refreshCloud);
                     refreshCloud.header.stamp = nh->get_clock()->now();
                     refreshCloud.header.frame_id = "camera_init";
-                    pubRefreshCloud->publish(refreshCloud);
+                    // pubRefreshCloud->publish(refreshCloud);
 
                     terrainVoxelUpdateNum[ind] = 0;
                     terrainVoxelUpdateTime[ind] = laserCloudTime - systemInitTime;
