@@ -1,3 +1,11 @@
 [submodule "far_planner"]
-	path = far_planner
-	url = https://github.com/MichaelFYang/far_planner.git
+    path = far_planner
+    url = https://github.com/cutezhaoooo/far_planner.git
+
+[submodule "livox_ros_driver2"]
+    path = livox_ros_driver2
+    url = https://github.com/cutezhaoooo/livox_ros_driver2.git
+
+[submodule "FAST_LIO"]
+    path = FAST_LIO
+    url = https://github.com/cutezhaoooo/FAST_LIO.git

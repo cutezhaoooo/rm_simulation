@@ -7,3 +7,5 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/cm
 ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
 
 在/home/z/rm_simulation/src/far_planner/src/far_planner/config 中修改default.yaml的world_frame为camera init
+
+git clone --recursive
