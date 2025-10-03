@@ -33,6 +33,10 @@
 
 const double PI = 3.1415926;
 
+#define PLOTPATHSET 1
+
+std::string pathFolder;
+
 double vehicleLength = 0.6;
 double vehicleWidth = 0.6;
 double sensorOffsetX = 0;
@@ -123,7 +127,11 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::Po
 pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud(new pcl::PointCloud<pcl::PointXYZI>());
 
-
+pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum];
+#if PLOTPATHSET == 1
+pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum];
+pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths(new pcl::PointCloud<pcl::PointXYZI>());
+#endif
 
 rclcpp::Node::SharedPtr nh;
 
@@ -150,10 +158,10 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 
 void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
 {
-    RCLCPP_INFO(nh->get_logger(),"laserCloudHandler");
+    // RCLCPP_INFO(nh->get_logger(),"laserCloudHandler");
     if (!useTerrainAnalysis)
     {
-        RCLCPP_INFO(nh->get_logger(),"laserCloudHandler useTerrainAnalysis");
+        // RCLCPP_INFO(nh->get_logger(),"laserCloudHandler useTerrainAnalysis");
         // 不走地形分析
         laserCloud->clear();
         // 转成pcl格式
@@ -242,12 +250,197 @@ void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
     goalY = goal->point.y;
 }
 
+int readPlyHeader(FILE *filePtr)
+{
+  char str[50];
+  int val, pointNum;
+  std::string strCur, strLast;
+  while (strCur != "end_header") {
+    val = fscanf(filePtr, "%s", str);
+    if (val != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+      exit(1);
+    }
+
+    strLast = strCur;
+    strCur = std::string(str);
+
+    if (strCur == "vertex" && strLast == "element") {
+      val = fscanf(filePtr, "%d", &pointNum);
+      if (val != 1) {
+        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+      }
+    }
+  }
+
+  return pointNum;
+}
+
+void readStartPaths()
+{
+  std::string fileName = pathFolder + "/startPaths.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  int pointNum = readPlyHeader(filePtr);
+
+  pcl::PointXYZ point;
+  int val1, val2, val3, val4, groupID;
+  for (int i = 0; i < pointNum; i++) {
+    val1 = fscanf(filePtr, "%f", &point.x);
+    val2 = fscanf(filePtr, "%f", &point.y);
+    val3 = fscanf(filePtr, "%f", &point.z);
+    val4 = fscanf(filePtr, "%d", &groupID);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+    }
+
+    if (groupID >= 0 && groupID < groupNum) {
+      startPaths[groupID]->push_back(point);
+    }
+  }
+
+  fclose(filePtr);
+}
+
+#if PLOTPATHSET == 1
+void readPaths()
+{
+  std::string fileName = pathFolder + "/paths.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  int pointNum = readPlyHeader(filePtr);
+
+  pcl::PointXYZI point;
+  int pointSkipNum = 30;
+  int pointSkipCount = 0;
+  int val1, val2, val3, val4, val5, pathID;
+  for (int i = 0; i < pointNum; i++) {
+    val1 = fscanf(filePtr, "%f", &point.x);
+    val2 = fscanf(filePtr, "%f", &point.y);
+    val3 = fscanf(filePtr, "%f", &point.z);
+    val4 = fscanf(filePtr, "%d", &pathID);
+    val5 = fscanf(filePtr, "%f", &point.intensity);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+    }
+
+    if (pathID >= 0 && pathID < pathNum) {
+      pointSkipCount++;
+      if (pointSkipCount > pointSkipNum) {
+        paths[pathID]->push_back(point);
+        pointSkipCount = 0;
+      }
+    }
+  }
+
+  fclose(filePtr);
+}
+#endif
+
+void readPathList()
+{
+  std::string fileName = pathFolder + "/pathList.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  if (pathNum != readPlyHeader(filePtr)) {
+    RCLCPP_INFO(nh->get_logger(), "Incorrect path number, exit.");
+    exit(1);
+  }
+
+  int val1, val2, val3, val4, val5, pathID, groupID;
+  float endX, endY, endZ;
+  for (int i = 0; i < pathNum; i++) {
+    val1 = fscanf(filePtr, "%f", &endX);
+    val2 = fscanf(filePtr, "%f", &endY);
+    val3 = fscanf(filePtr, "%f", &endZ);
+    val4 = fscanf(filePtr, "%d", &pathID);
+    val5 = fscanf(filePtr, "%d", &groupID);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+    }
+
+    if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
+      pathList[pathID] = groupID;
+      endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180 / PI;
+    }
+  }
+
+  fclose(filePtr);
+}
+
+void readCorrespondences()
+{
+  std::string fileName = pathFolder + "/correspondences.txt";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  int val1, gridVoxelID, pathID;
+  for (int i = 0; i < gridVoxelNum; i++) {
+    val1 = fscanf(filePtr, "%d", &gridVoxelID);
+    if (val1 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+    }
+
+    while (1) {
+      val1 = fscanf(filePtr, "%d", &pathID);
+      if (val1 != 1) {
+        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+          exit(1);
+      }
+
+      if (pathID != -1) {
+        if (gridVoxelID >= 0 && gridVoxelID < gridVoxelNum && pathID >= 0 && pathID < pathNum) {
+          correspondences[gridVoxelID].push_back(pathID);
+        }
+      } else {
+        break;
+      }
+    }
+  }
+
+  fclose(filePtr);
+}
+
+
+// TODO需要将free path补充出来 
 int main(int argc, char** argv)
 {
     rclcpp::init(argc,argv);
 
     // 根据odom来更新vehicle的值
     nh = rclcpp::Node::make_shared("localPlanner");
+
+    nh->declare_parameter<std::string>("pathFolder",pathFolder);
+
+    nh->get_parameter("pathFolder",pathFolder);
+
 
     // 这里要适配fast lio2 将/odom改为/Odometry
     auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
@@ -265,10 +458,18 @@ int main(int argc, char** argv)
     // NOTE:local planner中订阅的话题是way_point
     auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
 
+    auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/path",5);
+
+    #if PLOTPATHSET == 1
+    auto pubFreePaths = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths",2);
+    #endif
+
     laserDwzFilter.setLeafSize(laserVoxelSize, laserVoxelSize, laserVoxelSize);
     terrainDwzFilter.setLeafSize(terrainVoxelSize, terrainVoxelSize, terrainVoxelSize);
 
     RCLCPP_INFO(nh->get_logger(),"Initialization complete.");
+    nav_msgs::msg::Path path;
+
 
     
     // 重置laserCloudStack
@@ -276,6 +477,29 @@ int main(int argc, char** argv)
     {
         laserCloudStack[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
     }
+    for (int i = 0; i < groupNum; i++) {
+        startPaths[i].reset(new pcl::PointCloud<pcl::PointXYZ>());
+    }
+    #if PLOTPATHSET == 1
+    for (int i = 0; i < pathNum; i++) {
+        paths[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
+    }
+    #endif
+    for (int i = 0; i < gridVoxelNum; i++) {
+        correspondences[i].resize(0);
+    }
+
+    // 读取路径
+    readStartPaths();
+    // RCLCPP_INFO(nh->get_logger(),"readStartPaths");
+    #if PLOTPATHSET == 1
+    readPaths();
+    // RCLCPP_INFO(nh->get_logger(),"readPaths");
+    #endif
+    readPathList();
+    // RCLCPP_INFO(nh->get_logger(),"readPathList");
+    readCorrespondences();
+    // RCLCPP_INFO(nh->get_logger(),"readCorrespondences");
     
     rclcpp::Rate rate(100);
     bool status = rclcpp::ok();
@@ -283,18 +507,18 @@ int main(int argc, char** argv)
     // rclcpp::Rate rate(50);
     while (status)
     {
-        RCLCPP_INFO(nh->get_logger(),"while ok");
+        // RCLCPP_INFO(nh->get_logger(),"while ok");
         rclcpp::spin_some(nh);
         // rclcpp::spin(nh);
         
         
         // 先看看有新点云的情况 有新的newlaserCloud 或者 newTerrainCloud都会进入然后分别处理
-        RCLCPP_INFO(nh->get_logger(),"newlaserCloud :%d",newlaserCloud);
+        // RCLCPP_INFO(nh->get_logger(),"newlaserCloud :%d",newlaserCloud);
         if (newlaserCloud || newTerrainCloud)
         {
             if (newlaserCloud)
             {
-                RCLCPP_INFO(nh->get_logger(),"new laser cloud");
+                // RCLCPP_INFO(nh->get_logger(),"new laser cloud");
                 newlaserCloud = false;
     
                 // laserCloudStack是个长度为1的点云数组
@@ -321,7 +545,7 @@ int main(int argc, char** argv)
 
             if (newTerrainCloud)
             {
-                RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
+                // RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
                 newTerrainCloud = false;
 
                 plannerCloud->clear();
@@ -401,28 +625,274 @@ int main(int argc, char** argv)
                 pathScale = minPathScale;
             }
 
-            // while (pathScale >= minPathScale && pathRange >= minPathRange) {
-            //     // 清空之前的评分器
-            //     for (int i = 0; i < 36 * pathNum; i++) 
-            //     {
-            //         clearPathList[i] = 0;
-            //         pathPenaltyList[i] = 0;
-            //     }
-            //     for (int i = 0; i < 36 * groupNum; i++) 
-            //     {
-            //         clearPathPerGroupScore[i] = 0;
-            //     }
+            while (pathScale >= minPathScale && pathRange >= minPathRange) {
+                // 清空之前的评分器
+                for (int i = 0; i < 36 * pathNum; i++) 
+                {
+                    clearPathList[i] = 0;
+                    pathPenaltyList[i] = 0;
+                }
+                for (int i = 0; i < 36 * groupNum; i++) 
+                {
+                    clearPathPerGroupScore[i] = 0;
+                }
 
-            //     float minObsAngCW = -180.0;
-            //     float minObsAngCCW = 180.0;
-            //     float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
-            //     float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
-            //     // 遍历障碍物判断哪些路径会被阻挡
-            //     // BUG这里大概率没有点云需要检查
-            //     int plannerCloudCropSize = plannerCloudCrop->points.size();
+                float minObsAngCW = -180.0;
+                float minObsAngCCW = 180.0;
+                float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
+                float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
+                // 遍历障碍物判断哪些路径会被阻挡
 
+                int plannerCloudCropSize = plannerCloudCrop->points.size();
+                // 遍历局部感知点云
+                // 这里是通过 plannerCloudCrop 来判断的
+                for (int i = 0; i < plannerCloudCropSize; i++)
+                {
+                    // 
+                    float x = plannerCloudCrop->points[i].x / pathScale;
+                    float y = plannerCloudCrop->points[i].y / pathScale;
+                    float h = plannerCloudCrop->points[i].intensity;
+                    // 检查plannerCloudCrop没有问题
+                    float dis = std::sqrt(x*x + y*y);
 
-            // }
+                    if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
+                    {
+                        // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
+                        for (int rotDir = 0; rotDir < 36; rotDir++) 
+                        {
+                            // 每个旋转方向 当前位置转路径点的角度 
+                            float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                            float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+                        if (angDiff > 180.0) 
+                        {
+                            angDiff = 360.0 - angDiff;
+                        }
+                        if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                            ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) 
+                        {
+                            continue;
+                        }
+
+                        // HACK没有很理解
+                        float x2 = cos(rotAng) * x + sin(rotAng) * y;
+                        float y2 = -sin(rotAng) * x + cos(rotAng) * y;
+
+                        float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
+                                        * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
+
+                        int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
+                        int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
+                        if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) 
+                        {
+                            int ind = gridVoxelNumY * indX + indY;
+                            int blockedPathByVoxelNum = correspondences[ind].size();
+                            for (int j = 0; j < blockedPathByVoxelNum; j++) 
+                            {
+                                // 如果是高障碍 增加clearPathList计数
+                                if (h > obstacleHeightThre || !useTerrainAnalysis) 
+                                {
+                                    clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
+                                } else {
+                                    // 其余情况不算阻挡但是增加路径的惩罚
+                                    if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) 
+                                    {
+                                    pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
+                                    }
+                                }
+                            }
+                        }
+                        }
+                    }
+
+                    // 检查障碍物是否会阻止车辆绕中心旋转
+                    if (dis < diameter / pathScale && (fabs(x) > vehicleLength / pathScale / 2.0 || fabs(y) > vehicleWidth / pathScale / 2.0) && 
+                        (h > obstacleHeightThre || !useTerrainAnalysis) && checkRotObstacle) 
+                    {
+                        float angObs = atan2(y, x) * 180.0 / PI;
+                        if (angObs > 0) {
+                        if (minObsAngCCW > angObs - angOffset) minObsAngCCW = angObs - angOffset;
+                        if (minObsAngCW < angObs + angOffset - 180.0) minObsAngCW = angObs + angOffset - 180.0;
+                        } else {
+                        if (minObsAngCW < angObs + angOffset) minObsAngCW = angObs + angOffset;
+                        if (minObsAngCCW > 180.0 + angObs - angOffset) minObsAngCCW = 180.0 + angObs - angOffset;
+                        }
+                    }
+                    // RCLCPP_INFO(nh->get_logger(),"pathScale >= minPathScale && pathRange >= minPathRange");
+                }
+
+                if (minObsAngCW > 0)
+                {
+                    minObsAngCW = 0;
+                } 
+                    
+                if (minObsAngCCW < 0) 
+                {
+                    minObsAngCCW = 0;
+                }
+                
+                for (int i = 0; i < 36 * pathNum; i++) {
+                    int rotDir = int(i / pathNum);
+                    float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+                    if (angDiff > 180.0) {
+                        angDiff = 360.0 - angDiff;
+                    }
+                    if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                        ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
+                        continue;
+                    }
+
+                    // 对候选路径进行打分
+                    if (clearPathList[i] < pointPerPathThre) {
+                        float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
+                        if (penaltyScore < costScore) penaltyScore = costScore;
+
+                        float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
+                        if (dirDiff > 360.0) {
+                        dirDiff -= 360.0;
+                        }
+                        if (dirDiff > 180.0) {
+                        dirDiff = 360.0 - dirDiff;
+                        }
+
+                        float rotDirW;
+                        if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
+                        else rotDirW = fabs(fabs(rotDir - 27) + 1);
+                        float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
+                        if (score > 0) {
+                        clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
+                        }
+                    }
+                }
+                
+                float maxScore = 0;
+                int selectedGroupID = -1;
+                // 遍历所有方向路径组 选出得分最高的可行路径组
+                for (int i = 0; i < 36 * groupNum; i++) {
+                    int rotDir = int(i / groupNum);
+                    float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                    float rotDeg = 10.0 * rotDir;
+                    if (rotDeg > 180.0) rotDeg -= 360.0;
+                    if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+                        (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+                        maxScore = clearPathPerGroupScore[i];
+                        selectedGroupID = i;
+                    }
+                }
+
+                // 构造输出路径
+                if (selectedGroupID >= 0) 
+                {
+                int rotDir = int(selectedGroupID / groupNum);
+                float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+
+                selectedGroupID = selectedGroupID % groupNum;
+                int selectedPathLength = startPaths[selectedGroupID]->points.size();
+                path.poses.resize(selectedPathLength);
+                for (int i = 0; i < selectedPathLength; i++) {
+                    float x = startPaths[selectedGroupID]->points[i].x;
+                    float y = startPaths[selectedGroupID]->points[i].y;
+                    float z = startPaths[selectedGroupID]->points[i].z;
+                    float dis = sqrt(x * x + y * y);
+
+                    // TODO：这里的pose计算也许需要改一下
+                    if (dis <= pathRange / pathScale && dis <= relativeGoalDis / pathScale) {
+                    path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+                    path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+                    path.poses[i].pose.position.z = pathScale * z;
+                    } else {
+                    path.poses.resize(i);
+                    break;
+                    }
+                }
+
+                path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                // HACK 这个vehicle是什么
+                // path.header.frame_id = "body";
+                path.header.frame_id = "livox_frame";
+                pubPath->publish(path);
+
+                #if PLOTPATHSET == 1
+                freePaths->clear();
+                for (int i = 0; i < 36 * pathNum; i++) {
+                    int rotDir = int(i / pathNum);
+                    float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                    float rotDeg = 10.0 * rotDir;
+                    if (rotDeg > 180.0) rotDeg -= 360.0;
+                    float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+                    if (angDiff > 180.0) {
+                    angDiff = 360.0 - angDiff;
+                    }
+                    if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                        ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle) || 
+                        !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+                        (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+                    continue;
+                    }
+
+                    if (clearPathList[i] < pointPerPathThre) {
+                    int freePathLength = paths[i % pathNum]->points.size();
+                    for (int j = 0; j < freePathLength; j++) {
+                        point = paths[i % pathNum]->points[j];
+
+                        float x = point.x;
+                        float y = point.y;
+                        float z = point.z;
+
+                        float dis = sqrt(x * x + y * y);
+                        if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal)) {
+                        point.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+                        point.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+                        point.z = pathScale * z;
+                        point.intensity = 1.0;
+
+                        freePaths->push_back(point);
+                        }
+                    }
+                    }
+                }
+
+                sensor_msgs::msg::PointCloud2 freePaths2;
+                pcl::toROSMsg(*freePaths, freePaths2);
+                freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                // NOTE这里的vehicle应该是车辆的中心
+                freePaths2.header.frame_id = "livox_frame";
+                pubFreePaths->publish(freePaths2);
+                #endif
+                }
+
+                if (selectedGroupID < 0) {
+                    if (pathScale >= minPathScale + pathScaleStep) {
+                        pathScale -= pathScaleStep;
+                        pathRange = adjacentRange * pathScale / defPathScale;
+                    } else {
+                        pathRange -= pathRangeStep;
+                    }
+                    } else {
+                    pathFound = true;
+                    break;
+                }
+            }
+            pathScale = defPathScale;
+
+            if (!pathFound) {
+                path.poses.resize(1);
+                path.poses[0].pose.position.x = 0;
+                path.poses[0].pose.position.y = 0;
+                path.poses[0].pose.position.z = 0;
+
+                path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                path.header.frame_id = "livox_frame";
+                pubPath->publish(path);
+
+                #if PLOTPATHSET == 1
+                freePaths->clear();
+                sensor_msgs::msg::PointCloud2 freePaths2;
+                pcl::toROSMsg(*freePaths, freePaths2);
+                freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                freePaths2.header.frame_id = "livox_frame";
+                pubFreePaths->publish(freePaths2);
+                #endif
+            }
             
 
         }
