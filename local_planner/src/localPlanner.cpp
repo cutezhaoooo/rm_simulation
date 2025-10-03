@@ -127,6 +127,7 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::Po
 pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud(new pcl::PointCloud<pcl::PointXYZI>());
 
+// startPaths数组 每个元素都是PointXYZ 标记的是路径的起点
 pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum];
 #if PLOTPATHSET == 1
 pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum];
@@ -438,8 +439,11 @@ int main(int argc, char** argv)
     nh = rclcpp::Node::make_shared("localPlanner");
 
     nh->declare_parameter<std::string>("pathFolder",pathFolder);
+    nh->declare_parameter<double>("pathScale", pathScale);  // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
+
 
     nh->get_parameter("pathFolder",pathFolder);
+    nh->get_parameter("pathScale", pathScale);
 
 
     // 这里要适配fast lio2 将/odom改为/Odometry
@@ -625,6 +629,8 @@ int main(int argc, char** argv)
                 pathScale = minPathScale;
             }
 
+            // =================================================================================================
+            //                                  TAG 这里开始设置路径
             while (pathScale >= minPathScale && pathRange >= minPathRange) {
                 // 清空之前的评分器
                 for (int i = 0; i < 36 * pathNum; i++) 
@@ -648,13 +654,14 @@ int main(int argc, char** argv)
                 // 这里是通过 plannerCloudCrop 来判断的
                 for (int i = 0; i < plannerCloudCropSize; i++)
                 {
-                    // 
+                    // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
                     float x = plannerCloudCrop->points[i].x / pathScale;
                     float y = plannerCloudCrop->points[i].y / pathScale;
                     float h = plannerCloudCrop->points[i].intensity;
                     // 检查plannerCloudCrop没有问题
                     float dis = std::sqrt(x*x + y*y);
 
+                    // 判断条件：1.小于路径宽度（点云在车辆检测范围内）2.代检测点到车辆距离dis小于车到目标点距离（离目标太远无意义） 3.启动障碍物检测的点
                     if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
                     {
                         // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
@@ -676,14 +683,16 @@ int main(int argc, char** argv)
                         // HACK没有很理解
                         float x2 = cos(rotAng) * x + sin(rotAng) * y;
                         float y2 = -sin(rotAng) * x + cos(rotAng) * y;
-
                         float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
-                                        * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
-
+                        * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
+                        
+                        // 计算该plannerCloudCropSize（i）点云对应的体素网格的索引（体素网格下包含searchRadius范围内的path_id）
                         int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
                         int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
+
                         if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) 
                         {
+                            // 二维索引映射到一维
                             int ind = gridVoxelNumY * indX + indY;
                             int blockedPathByVoxelNum = correspondences[ind].size();
                             for (int j = 0; j < blockedPathByVoxelNum; j++) 
@@ -696,7 +705,7 @@ int main(int argc, char** argv)
                                     // 其余情况不算阻挡但是增加路径的惩罚
                                     if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) 
                                     {
-                                    pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
+                                        pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
                                     }
                                 }
                             }
@@ -748,33 +757,55 @@ int main(int argc, char** argv)
 
                         float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
                         if (dirDiff > 360.0) {
-                        dirDiff -= 360.0;
+                            dirDiff -= 360.0;
                         }
                         if (dirDiff > 180.0) {
-                        dirDiff = 360.0 - dirDiff;
+                            dirDiff = 360.0 - dirDiff;
                         }
 
                         float rotDirW;
-                        if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
-                        else rotDirW = fabs(fabs(rotDir - 27) + 1);
+                        if (rotDir < 18) 
+                        {
+                            rotDirW = fabs(fabs(rotDir - 9) + 1);
+                        }
+                        else {
+                            rotDirW = fabs(fabs(rotDir - 27) + 1);
+                        }
+                        // 1 - 四次根号(权重系数 * 路径终点与目标点之间的角度差值) 路径的方向与当前车辆朝向（车辆y轴=yaw角）的角度差  penaltyScore 路径上的障碍给出的惩罚得分 angDiff
                         float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
                         if (score > 0) {
-                        clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
+                            //将所有path_id下的分数加到对应path_id下的groupid中，用于选择对应rotdir的groupid（确定第一级路径）
+                            //定位到特定路径组groupid，groupNum * rotDir是该方向上的groupid起始序号，pathList[i % pathNum]]0-343该条路径对应的groupid（0-7）中的一个
+                            clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
                         }
+                        // for (int rotDir = 0; rotDir < 36; rotDir++) {
+                        //     std::stringstream ss;
+                        //     ss << "rotDir " << rotDir << " scores: ";
+                        //     for (int g = 0; g < groupNum; g++) {
+                        //         ss << clearPathPerGroupScore[rotDir * groupNum + g] << " ";
+                        //     }
+                        //     RCLCPP_INFO(nh->get_logger(), "%s", ss.str().c_str());
+                        // }
+
                     }
                 }
                 
                 float maxScore = 0;
                 int selectedGroupID = -1;
                 // 遍历所有方向路径组 选出得分最高的可行路径组
+                // groupNum 第一次分裂出来的组数
                 for (int i = 0; i < 36 * groupNum; i++) {
+                    //遍历可选路径（36*7）即（rotdir朝向*第一级group_id）
+                    // rotDir路径方向
                     int rotDir = int(i / groupNum);
                     float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
                     float rotDeg = 10.0 * rotDir;
                     if (rotDeg > 180.0) rotDeg -= 360.0;
                     if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
                         (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+                        // 选择 7* 36中分数最大的
                         maxScore = clearPathPerGroupScore[i];
+                        // 记录所选路径的ID
                         selectedGroupID = i;
                     }
                 }
@@ -782,82 +813,85 @@ int main(int argc, char** argv)
                 // 构造输出路径
                 if (selectedGroupID >= 0) 
                 {
-                int rotDir = int(selectedGroupID / groupNum);
-                float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-
-                selectedGroupID = selectedGroupID % groupNum;
-                int selectedPathLength = startPaths[selectedGroupID]->points.size();
-                path.poses.resize(selectedPathLength);
-                for (int i = 0; i < selectedPathLength; i++) {
-                    float x = startPaths[selectedGroupID]->points[i].x;
-                    float y = startPaths[selectedGroupID]->points[i].y;
-                    float z = startPaths[selectedGroupID]->points[i].z;
-                    float dis = sqrt(x * x + y * y);
-
-                    // TODO：这里的pose计算也许需要改一下
-                    if (dis <= pathRange / pathScale && dis <= relativeGoalDis / pathScale) {
-                    path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
-                    path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
-                    path.poses[i].pose.position.z = pathScale * z;
-                    } else {
-                    path.poses.resize(i);
-                    break;
-                    }
-                }
-
-                path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-                // HACK 这个vehicle是什么
-                // path.header.frame_id = "body";
-                path.header.frame_id = "livox_frame";
-                pubPath->publish(path);
-
-                #if PLOTPATHSET == 1
-                freePaths->clear();
-                for (int i = 0; i < 36 * pathNum; i++) {
-                    int rotDir = int(i / pathNum);
+                    int rotDir = int(selectedGroupID / groupNum);
                     float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-                    float rotDeg = 10.0 * rotDir;
-                    if (rotDeg > 180.0) rotDeg -= 360.0;
-                    float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
-                    if (angDiff > 180.0) {
-                    angDiff = 360.0 - angDiff;
-                    }
-                    if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-                        ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle) || 
-                        !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
-                        (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
-                    continue;
-                    }
 
-                    if (clearPathList[i] < pointPerPathThre) {
-                    int freePathLength = paths[i % pathNum]->points.size();
-                    for (int j = 0; j < freePathLength; j++) {
-                        point = paths[i % pathNum]->points[j];
-
-                        float x = point.x;
-                        float y = point.y;
-                        float z = point.z;
-
+                    selectedGroupID = selectedGroupID % groupNum;
+                    int selectedPathLength = startPaths[selectedGroupID]->points.size();
+                    path.poses.resize(selectedPathLength);
+                    for (int i = 0; i < selectedPathLength; i++) {
+                        float x = startPaths[selectedGroupID]->points[i].x;
+                        float y = startPaths[selectedGroupID]->points[i].y;
+                        float z = startPaths[selectedGroupID]->points[i].z;
                         float dis = sqrt(x * x + y * y);
-                        if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal)) {
-                        point.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
-                        point.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
-                        point.z = pathScale * z;
-                        point.intensity = 1.0;
 
-                        freePaths->push_back(point);
+                        // TODO：这里的pose计算也许需要改一下
+                        if (dis <= pathRange / pathScale && dis <= relativeGoalDis / pathScale) {
+                            path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+                            path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+                            path.poses[i].pose.position.z = pathScale * z;
+                        } else {
+                            path.poses.resize(i);
+                            break;
                         }
                     }
-                    }
-                }
 
-                sensor_msgs::msg::PointCloud2 freePaths2;
-                pcl::toROSMsg(*freePaths, freePaths2);
-                freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-                // NOTE这里的vehicle应该是车辆的中心
-                freePaths2.header.frame_id = "livox_frame";
-                pubFreePaths->publish(freePaths2);
-                #endif
+                    path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                    // HACK 这个vehicle是什么
+                    // path.header.frame_id = "body";
+                    path.header.frame_id = "livox_frame";
+                    pubPath->publish(path);
+
+                    #if PLOTPATHSET == 1
+                    freePaths->clear();
+                    // 候选路径可视化
+                    for (int i = 0; i < 36 * pathNum; i++) {
+                        // rotDir 当前方向的旋转角度
+                        int rotDir = int(i / pathNum);
+                        float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                        float rotDeg = 10.0 * rotDir;
+                        if (rotDeg > 180.0) rotDeg -= 360.0;
+                        // 候选路径过滤
+                        float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+                        if (angDiff > 180.0) {
+                            angDiff = 360.0 - angDiff;
+                        }
+                        if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                            ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle) || 
+                            !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+                            (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+                        continue;
+                        }
+
+                        if (clearPathList[i] < pointPerPathThre) {
+                            int freePathLength = paths[i % pathNum]->points.size();
+                            for (int j = 0; j < freePathLength; j++) {
+                                point = paths[i % pathNum]->points[j];
+
+                                float x = point.x;
+                                float y = point.y;
+                                float z = point.z;
+
+                                float dis = sqrt(x * x + y * y);
+                                if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal)) {
+                                    point.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+                                    point.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+                                    point.z = pathScale * z;
+                                    point.intensity = 1.0;
+
+                                    freePaths->push_back(point);
+                                }
+                            }
+                        }
+                    }
+
+                    sensor_msgs::msg::PointCloud2 freePaths2;
+                    pcl::toROSMsg(*freePaths, freePaths2);
+                    freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+                    // NOTE这里的vehicle应该是车辆的中心
+                    freePaths2.header.frame_id = "livox_frame";
+                    pubFreePaths->publish(freePaths2);
+                    #endif
                 }
 
                 if (selectedGroupID < 0) {
