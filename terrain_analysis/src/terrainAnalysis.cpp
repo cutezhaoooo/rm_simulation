@@ -448,7 +448,7 @@ int main(int argc, char **argv)
             // 提取机器人中心的 11 * 11点云
             for (int indX = terrainVoxelHalfWidth - 5; indX <= terrainVoxelHalfWidth + 5; indX++)
             {
-                for (int indY = terrainVoxelHalfWidth - 5; indY <= terrainVoxelHalfWidth; indY++)
+                for (int indY = terrainVoxelHalfWidth - 5; indY <= terrainVoxelHalfWidth + 5; indY++)
                 {
                     *terrainCloud += *terrainVoxelCloud[terrainVoxelWidth * indX + indY];
                 }
