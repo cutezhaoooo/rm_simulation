@@ -71,7 +71,7 @@ bool systemInited = false;
 double minRelZ = -1.5;
 double maxRelZ = 0.2;
 double disRatioZ = 0.2;
-int voxelPointUpdateThre = 100.0;
+int voxelPointUpdateThre = 100;
 bool clearingCloud = false;
 double clearingDis = 8.0;
 

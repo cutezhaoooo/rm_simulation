@@ -22,7 +22,7 @@
     <param name="noDataBlockSkipNum" value="0" />
     <param name="minBlockPointNum" value="10" />
     <param name="vehicleHeight" value="1.5" />
-    <param name="voxelPointUpdateThre" value="100.0" />
+    <param name="voxelPointUpdateThre" value="100" />
     <param name="voxelTimeUpdateThre" value="2.0" />
     <param name="minRelZ" value="-2.5" />
     <param name="maxRelZ" value="1.0" />
