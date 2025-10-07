@@ -20,3 +20,5 @@ git clone --recursive https://github.com/cutezhaoooo/rm_simulation.git
 
 编译成debug格式
 colcon build --packages-select local_planner --cmake-args -DCMAKE_BUILD_TYPE=Debug
+
+colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
