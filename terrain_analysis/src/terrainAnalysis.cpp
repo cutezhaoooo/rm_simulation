@@ -71,7 +71,7 @@ bool systemInited = false;
 double minRelZ = -1.5;
 double maxRelZ = 0.2;
 double disRatioZ = 0.2;
-double voxelPointUpdateThre = 100.0;
+int voxelPointUpdateThre = 100.0;
 bool clearingCloud = false;
 double clearingDis = 8.0;
 
@@ -85,7 +85,7 @@ int noDataBlockSkipNum = 0;
 // bool useSorting = true;
 bool useSorting = false;
 
-bool quantileZ = 0.25;
+double quantileZ = 0.25;
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr
     laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
@@ -216,16 +216,59 @@ int main(int argc, char **argv)
     rclcpp::init(argc,argv);
     nh = rclcpp::Node::make_shared("terrainAnalysis");
 
+    nh->declare_parameter<double>("scanVoxelSize", scanVoxelSize);
+    nh->declare_parameter<double>("decayTime", decayTime);
+    nh->declare_parameter<double>("noDecayDis", noDecayDis);
+    nh->declare_parameter<double>("clearingDis", clearingDis);
+    nh->declare_parameter<bool>("useSorting", useSorting);
+    nh->declare_parameter<double>("quantileZ", quantileZ);
+    nh->declare_parameter<bool>("considerDrop", considerDrop);
+    nh->declare_parameter<bool>("limitGroundLift", limitGroundLift);
+    nh->declare_parameter<double>("maxGroundLift", maxGroundLift);
+    nh->declare_parameter<bool>("clearDyObs", clearDyObs);
+    nh->declare_parameter<double>("minDyObsDis", minDyObsDis);
+    nh->declare_parameter<double>("minDyObsAngle", minDyObsAngle);
+    nh->declare_parameter<double>("minDyObsRelZ", minDyObsRelZ);
+    nh->declare_parameter<double>("absDyObsRelZThre", absDyObsRelZThre);
+    nh->declare_parameter<double>("minDyObsVFOV", minDyObsVFOV);
+    nh->declare_parameter<double>("maxDyObsVFOV", maxDyObsVFOV);
+    nh->declare_parameter<int>("minDyObsPointNum", minDyObsPointNum);
+    nh->declare_parameter<bool>("noDataObstacle", noDataObstacle);
+    nh->declare_parameter<int>("noDataBlockSkipNum", noDataBlockSkipNum);
+    nh->declare_parameter<int>("minBlockPointNum", minBlockPointNum);
+    nh->declare_parameter<double>("vehicleHeight", vehicleHeight);
+    nh->declare_parameter<int>("voxelPointUpdateThre", voxelPointUpdateThre);
+    nh->declare_parameter<double>("voxelTimeUpdateThre", voxelTimeUpdateThre);
+    nh->declare_parameter<double>("minRelZ", minRelZ);
+    nh->declare_parameter<double>("maxRelZ", maxRelZ);
+    nh->declare_parameter<double>("disRatioZ", disRatioZ);
 
-    nh->declare_parameter<double>("scanVoxelSize",scanVoxelSize);
-    nh->declare_parameter<double>("voxelPointUpdateThre",voxelPointUpdateThre);
-    nh->declare_parameter<double>("voxelTimeUpdateThre",voxelTimeUpdateThre);
-    nh->declare_parameter<double>("decayTime",decayTime);
-
-    nh->get_parameter("scanVoxelSize",scanVoxelSize);
-    nh->get_parameter("voxelPointUpdateThre",voxelPointUpdateThre);
-    nh->get_parameter("voxelTimeUpdateThre",voxelTimeUpdateThre);
-    nh->get_parameter("decayTime",decayTime);
+    nh->get_parameter("scanVoxelSize", scanVoxelSize);
+    nh->get_parameter("decayTime", decayTime);
+    nh->get_parameter("noDecayDis", noDecayDis);
+    nh->get_parameter("clearingDis", clearingDis);
+    nh->get_parameter("useSorting", useSorting);
+    nh->get_parameter("quantileZ", quantileZ);
+    nh->get_parameter("considerDrop", considerDrop);
+    nh->get_parameter("limitGroundLift", limitGroundLift);
+    nh->get_parameter("maxGroundLift", maxGroundLift);
+    nh->get_parameter("clearDyObs", clearDyObs);
+    nh->get_parameter("minDyObsDis", minDyObsDis);
+    nh->get_parameter("minDyObsAngle", minDyObsAngle);
+    nh->get_parameter("minDyObsRelZ", minDyObsRelZ);
+    nh->get_parameter("absDyObsRelZThre", absDyObsRelZThre);
+    nh->get_parameter("minDyObsVFOV", minDyObsVFOV);
+    nh->get_parameter("maxDyObsVFOV", maxDyObsVFOV);
+    nh->get_parameter("minDyObsPointNum", minDyObsPointNum);
+    nh->get_parameter("noDataObstacle", noDataObstacle);
+    nh->get_parameter("noDataBlockSkipNum", noDataBlockSkipNum);
+    nh->get_parameter("minBlockPointNum", minBlockPointNum);
+    nh->get_parameter("vehicleHeight", vehicleHeight);
+    nh->get_parameter("voxelPointUpdateThre", voxelPointUpdateThre);
+    nh->get_parameter("voxelTimeUpdateThre", voxelTimeUpdateThre);
+    nh->get_parameter("minRelZ", minRelZ);
+    nh->get_parameter("maxRelZ", maxRelZ);
+    nh->get_parameter("disRatioZ", disRatioZ);
     // 
 
     // 订阅odom 这里通过fast lio提供odom Odometry

@@ -438,12 +438,85 @@ int main(int argc, char** argv)
     // 根据odom来更新vehicle的值
     nh = rclcpp::Node::make_shared("localPlanner");
 
-    nh->declare_parameter<std::string>("pathFolder",pathFolder);
-    nh->declare_parameter<double>("pathScale", pathScale);  // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
+    nh->declare_parameter<std::string>("pathFolder", pathFolder);
+    nh->declare_parameter<double>("vehicleLength", vehicleLength);
+    nh->declare_parameter<double>("vehicleWidth", vehicleWidth);
+    nh->declare_parameter<double>("sensorOffsetX", sensorOffsetX);
+    nh->declare_parameter<double>("sensorOffsetY", sensorOffsetY);
+    nh->declare_parameter<bool>("twoWayDrive", twoWayDrive);
+    nh->declare_parameter<double>("laserVoxelSize", laserVoxelSize);
+    nh->declare_parameter<double>("terrainVoxelSize", terrainVoxelSize);
+    nh->declare_parameter<bool>("useTerrainAnalysis", useTerrainAnalysis);
+    nh->declare_parameter<bool>("checkObstacle", checkObstacle);
+    nh->declare_parameter<bool>("checkRotObstacle", checkRotObstacle);
+    nh->declare_parameter<double>("adjacentRange", adjacentRange);
+    nh->declare_parameter<double>("obstacleHeightThre", obstacleHeightThre);
+    nh->declare_parameter<double>("groundHeightThre", groundHeightThre);
+    nh->declare_parameter<double>("costHeightThre", costHeightThre);
+    nh->declare_parameter<double>("costScore", costScore);
+    nh->declare_parameter<bool>("useCost", useCost);
+    nh->declare_parameter<int>("pointPerPathThre", pointPerPathThre);
+    nh->declare_parameter<double>("minRelZ", minRelZ);
+    nh->declare_parameter<double>("maxRelZ", maxRelZ);
+    nh->declare_parameter<double>("maxSpeed", maxSpeed);
+    nh->declare_parameter<double>("dirWeight", dirWeight);
+    nh->declare_parameter<double>("dirThre", dirThre);
+    nh->declare_parameter<bool>("dirToVehicle", dirToVehicle);
+    nh->declare_parameter<double>("pathScale", pathScale);
+    nh->declare_parameter<double>("minPathScale", minPathScale);
+    nh->declare_parameter<double>("pathScaleStep", pathScaleStep);
+    nh->declare_parameter<bool>("pathScaleBySpeed", pathScaleBySpeed);
+    nh->declare_parameter<double>("minPathRange", minPathRange);
+    nh->declare_parameter<double>("pathRangeStep", pathRangeStep);
+    nh->declare_parameter<bool>("pathRangeBySpeed", pathRangeBySpeed);
+    nh->declare_parameter<bool>("pathCropByGoal", pathCropByGoal);
+    nh->declare_parameter<bool>("autonomyMode", autonomyMode);
+    nh->declare_parameter<double>("autonomySpeed", autonomySpeed);
+    nh->declare_parameter<double>("joyToSpeedDelay", joyToSpeedDelay);
+    nh->declare_parameter<double>("joyToCheckObstacleDelay", joyToCheckObstacleDelay);
+    nh->declare_parameter<double>("goalClearRange", goalClearRange);
+    nh->declare_parameter<double>("goalX", goalX);
+    nh->declare_parameter<double>("goalY", goalY);
 
-
-    nh->get_parameter("pathFolder",pathFolder);
+    nh->get_parameter("pathFolder", pathFolder);
+    nh->get_parameter("vehicleLength", vehicleLength);
+    nh->get_parameter("vehicleWidth", vehicleWidth);
+    nh->get_parameter("sensorOffsetX", sensorOffsetX);
+    nh->get_parameter("sensorOffsetY", sensorOffsetY);
+    nh->get_parameter("twoWayDrive", twoWayDrive);
+    nh->get_parameter("laserVoxelSize", laserVoxelSize);
+    nh->get_parameter("terrainVoxelSize", terrainVoxelSize);
+    nh->get_parameter("useTerrainAnalysis", useTerrainAnalysis);
+    nh->get_parameter("checkObstacle", checkObstacle);
+    nh->get_parameter("checkRotObstacle", checkRotObstacle);
+    nh->get_parameter("adjacentRange", adjacentRange);
+    nh->get_parameter("obstacleHeightThre", obstacleHeightThre);
+    nh->get_parameter("groundHeightThre", groundHeightThre);
+    nh->get_parameter("costHeightThre", costHeightThre);
+    nh->get_parameter("costScore", costScore);
+    nh->get_parameter("useCost", useCost);
+    nh->get_parameter("pointPerPathThre", pointPerPathThre);
+    nh->get_parameter("minRelZ", minRelZ);
+    nh->get_parameter("maxRelZ", maxRelZ);
+    nh->get_parameter("maxSpeed", maxSpeed);
+    nh->get_parameter("dirWeight", dirWeight);
+    nh->get_parameter("dirThre", dirThre);
+    nh->get_parameter("dirToVehicle", dirToVehicle);
     nh->get_parameter("pathScale", pathScale);
+    nh->get_parameter("minPathScale", minPathScale);
+    nh->get_parameter("pathScaleStep", pathScaleStep);
+    nh->get_parameter("pathScaleBySpeed", pathScaleBySpeed);
+    nh->get_parameter("minPathRange", minPathRange);
+    nh->get_parameter("pathRangeStep", pathRangeStep);
+    nh->get_parameter("pathRangeBySpeed", pathRangeBySpeed);
+    nh->get_parameter("pathCropByGoal", pathCropByGoal);
+    nh->get_parameter("autonomyMode", autonomyMode);
+    nh->get_parameter("autonomySpeed", autonomySpeed);
+    nh->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
+    nh->get_parameter("joyToCheckObstacleDelay", joyToCheckObstacleDelay);
+    nh->get_parameter("goalClearRange", goalClearRange);
+    nh->get_parameter("goalX", goalX);
+    nh->get_parameter("goalY", goalY);
 
 
     // 这里要适配fast lio2 将/odom改为/Odometry

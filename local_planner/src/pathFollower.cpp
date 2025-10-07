@@ -257,9 +257,10 @@ int main(int argc, char** argv)
 
   auto subStop = nh->create_subscription<std_msgs::msg::Int8>("/stop", 5, stopHandler);
 
-  auto pubSpeed = nh->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel_chassis", 5);
+  // auto pubSpeed = nh->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel_chassis", 5);
+  auto pubSpeed = nh->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_chassis", 5);
 
-  geometry_msgs::msg::TwistStamped cmd_vel;
+  geometry_msgs::msg::Twist cmd_vel;
 //   cmd_vel.header.frame_id = "base_link";
 
   if (autonomyMode) {
@@ -366,12 +367,15 @@ int main(int argc, char** argv)
 
       pubSkipCount--;
       if (pubSkipCount < 0) {
-        cmd_vel.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-        if (fabs(vehicleSpeed) <= maxAccel / 100.0) cmd_vel.twist.linear.x = 0;
-        else cmd_vel.twist.linear.x = vehicleSpeed;
-        cmd_vel.twist.angular.z = vehicleYawRate;
+        // ✅ 设置线速度和角速度
+        if (fabs(vehicleSpeed) <= maxAccel / 100.0) {
+          cmd_vel.linear.x = 0.0;
+        } else {
+          cmd_vel.linear.x = vehicleSpeed;
+        }
+        cmd_vel.angular.z = vehicleYawRate;
+        // ✅ 发布 Twist 消息
         pubSpeed->publish(cmd_vel);
-
         pubSkipCount = pubSkipNum;
       }
     }
