@@ -32,15 +32,17 @@ double scanVoxelSize = 0.05;
 float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0;
 float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 float vehicleXRec = 0, vehicleYRec = 0;
-
+double minDyObsVFOV = -16.0;
 float sinVehicleRoll = 0, cosVehicleRoll = 0;
 float sinVehiclePitch = 0, cosVehiclePitch = 0;
 float sinVehicleYaw = 0, cosVehicleYaw = 0;
-
+double maxDyObsVFOV = 16.0;
 int minDyObsPointNum = 1;
-bool considerDrop = false;
-
-
+// bool considerDrop = false;
+bool considerDrop = true;
+double minDyObsDis = 0.3;
+double minDyObsRelZ = -0.5;
+double minDyObsAngle = 0;
 float terrainVoxelSize = 1.0;
 int terrainVoxelShiftX = 0;
 int terrainVoxelShiftY = 0;
@@ -49,9 +51,10 @@ int terrainVoxelHalfWidth = (terrainVoxelWidth - 1) / 2;
 const int terrainVoxelNum = terrainVoxelWidth * terrainVoxelWidth;
 double voxelTimeUpdateThre = 2.0;
 int minBlockPointNum = 10;  // 
+double absDyObsRelZThre = 0.2;
 
 
-bool clearDyObs = false;
+bool clearDyObs = true;
 bool limitGroundLift = false;
 double vehicleHeight = 1.5;
 
@@ -79,7 +82,8 @@ const int planarVoxelNum = planarVoxelWidth * planarVoxelWidth;
 bool noDataObstacle = false;
 int noDataBlockSkipNum = 0;
 
-bool useSorting = true;
+// bool useSorting = true;
+bool useSorting = false;
 
 bool quantileZ = 0.25;
 
@@ -513,21 +517,82 @@ int main(int argc, char **argv)
                 }
 
                 // 是否启用障碍物清除
-                if (clearDyObs)
-                {
-                    // TODO后续补充障碍物清除的逻辑
+                if (clearDyObs) {
+                          if (indX >= 0 && indX < planarVoxelWidth && indY >= 0 &&
+                              indY < planarVoxelWidth) {
+                            float pointX1 = point.x - vehicleX;
+                            float pointY1 = point.y - vehicleY;
+                            float pointZ1 = point.z - vehicleZ;
 
-                    /* code */
+                            float dis1 = sqrt(pointX1 * pointX1 + pointY1 * pointY1);
+                            if (dis1 > minDyObsDis) {
+                              float angle1 = atan2(pointZ1 - minDyObsRelZ, dis1) * 180.0 / PI;
+                              if (angle1 > minDyObsAngle) {
+                                float pointX2 =
+                                    pointX1 * cosVehicleYaw + pointY1 * sinVehicleYaw;
+                                float pointY2 =
+                                    -pointX1 * sinVehicleYaw + pointY1 * cosVehicleYaw;
+                                float pointZ2 = pointZ1;
+
+                                float pointX3 =
+                                    pointX2 * cosVehiclePitch - pointZ2 * sinVehiclePitch;
+                                float pointY3 = pointY2;
+                                float pointZ3 =
+                                    pointX2 * sinVehiclePitch + pointZ2 * cosVehiclePitch;
+
+                                float pointX4 = pointX3;
+                                float pointY4 =
+                                    pointY3 * cosVehicleRoll + pointZ3 * sinVehicleRoll;
+                                float pointZ4 =
+                                    -pointY3 * sinVehicleRoll + pointZ3 * cosVehicleRoll;
+
+                                float dis4 = sqrt(pointX4 * pointX4 + pointY4 * pointY4);
+                                float angle4 = atan2(pointZ4, dis4) * 180.0 / PI;
+                                if (angle4 > minDyObsVFOV && angle4 < maxDyObsVFOV || fabs(pointZ4) < absDyObsRelZThre) {
+                                  planarVoxelDyObs[planarVoxelWidth * indX + indY]++;
+                                }
+                              }
+                            } else {
+                              planarVoxelDyObs[planarVoxelWidth * indX + indY] +=
+                                  minDyObsPointNum;
+                            }
+                          }
+                        }
+            
+            }
+
+            
+            if (clearDyObs) {
+              for (int i = 0; i < laserCloudCropSize; i++) {
+                point = laserCloudCrop->points[i];
+
+                int indX = int((point.x - vehicleX + planarVoxelSize / 2) /
+                              planarVoxelSize) +
+                          planarVoxelHalfWidth;
+                int indY = int((point.y - vehicleY + planarVoxelSize / 2) /
+                              planarVoxelSize) +
+                          planarVoxelHalfWidth;
+
+                if (point.x - vehicleX + planarVoxelSize / 2 < 0)
+                  indX--;
+                if (point.y - vehicleY + planarVoxelSize / 2 < 0)
+                  indY--;
+
+                if (indX >= 0 && indX < planarVoxelWidth && indY >= 0 &&
+                    indY < planarVoxelWidth) {
+                  float pointX1 = point.x - vehicleX;
+                  float pointY1 = point.y - vehicleY;
+                  float pointZ1 = point.z - vehicleZ;
+
+                  float dis1 = sqrt(pointX1 * pointX1 + pointY1 * pointY1);
+                  float angle1 = atan2(pointZ1 - minDyObsRelZ, dis1) * 180.0 / PI;
+                  if (angle1 > minDyObsAngle) {
+                    planarVoxelDyObs[planarVoxelWidth * indX + indY] = 0;
+                  }
                 }
-            
+              }
             }
-
-            // TODO后续补充障碍物清除的逻辑
-            if (clearDyObs)
-            {
-                /* code */
-            }
-            
+                  
             // 两种地面估计的方法
             if (useSorting) 
             {
