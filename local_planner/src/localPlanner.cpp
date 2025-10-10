@@ -535,7 +535,7 @@ int main(int argc, char** argv)
     // NOTE:local planner中订阅的话题是way_point
     auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
 
-    auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/path",5);
+    auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/local_path",5);
 
     #if PLOTPATHSET == 1
     auto pubFreePaths = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths",2);
@@ -912,7 +912,7 @@ int main(int argc, char** argv)
                     path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
                     // HACK 这个vehicle是什么
                     // path.header.frame_id = "body";
-                    path.header.frame_id = "livox_frame";
+                    path.header.frame_id = "base_link";
                     pubPath->publish(path);
 
                     #if PLOTPATHSET == 1
@@ -962,7 +962,7 @@ int main(int argc, char** argv)
                     pcl::toROSMsg(*freePaths, freePaths2);
                     freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
                     // NOTE这里的vehicle应该是车辆的中心
-                    freePaths2.header.frame_id = "livox_frame";
+                    freePaths2.header.frame_id = "base_link";
                     pubFreePaths->publish(freePaths2);
                     #endif
                 }
@@ -988,7 +988,7 @@ int main(int argc, char** argv)
                 path.poses[0].pose.position.z = 0;
 
                 path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-                path.header.frame_id = "livox_frame";
+                path.header.frame_id = "base_link";
                 pubPath->publish(path);
 
                 #if PLOTPATHSET == 1
@@ -996,7 +996,7 @@ int main(int argc, char** argv)
                 sensor_msgs::msg::PointCloud2 freePaths2;
                 pcl::toROSMsg(*freePaths, freePaths2);
                 freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-                freePaths2.header.frame_id = "livox_frame";
+                freePaths2.header.frame_id = "base_link";
                 pubFreePaths->publish(freePaths2);
                 #endif
             }

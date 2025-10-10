@@ -34,6 +34,8 @@
 #include "rmw/types.h"
 #include "rmw/qos_profiles.h"
 
+#include "visualization_msgs/msg/marker.hpp"
+
 using namespace std;
 
 const double PI = 3.1415926;
@@ -257,6 +259,8 @@ int main(int argc, char** argv)
 
   auto subStop = nh->create_subscription<std_msgs::msg::Int8>("/stop", 5, stopHandler);
 
+  auto pubMarker = nh->create_publisher<visualization_msgs::msg::Marker>("/look_ahead_point", 1);
+
   // auto pubSpeed = nh->create_publisher<geometry_msgs::msg::TwistStamped>("/cmd_vel_chassis", 5);
   auto pubSpeed = nh->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_chassis", 5);
 
@@ -275,7 +279,9 @@ int main(int argc, char** argv)
   while (status) {
     rclcpp::spin_some(nh);
 
-    if (pathInit) {
+    if (pathInit && path.poses.size()>0) {
+      // vehicleXRec是车辆在接收到path时的位置
+      // vehicleXRel变成以 vehicleXRec为原点 方向为基准的坐标点
       float vehicleXRel = cos(vehicleYawRec) * (vehicleX - vehicleXRec) 
                         + sin(vehicleYawRec) * (vehicleY - vehicleYRec);
       float vehicleYRel = -sin(vehicleYawRec) * (vehicleX - vehicleXRec) 
@@ -283,6 +289,9 @@ int main(int argc, char** argv)
 
       int pathSize = path.poses.size();
       float endDisX = path.poses[pathSize - 1].pose.position.x - vehicleXRel;
+      // 打印path的位置 
+      // RCLCPP_INFO(nh->get_logger(),"path的位置 x:%.2f",path.poses[pathSize - 1].pose.position.x);
+      // RCLCPP_INFO(nh->get_logger(),"path的位置 y:%.2f",path.poses[pathSize - 1].pose.position.y);
       float endDisY = path.poses[pathSize - 1].pose.position.y - vehicleYRel;
       float endDis = sqrt(endDisX * endDisX + endDisY * endDisY);
 
@@ -297,7 +306,49 @@ int main(int argc, char** argv)
           break;
         }
       }
+      
+      
+      // 获取当前前瞻点在局部坐标系中的位置
+      float targetX_local = path.poses[pathPointID].pose.position.x;
+      float targetY_local = path.poses[pathPointID].pose.position.y;
 
+      // 将局部坐标转换为全局坐标
+      // 注意：vehicleXRec/Y/YawRec 是路径开始时的全局位姿
+      float cos_yaw = cos(vehicleYawRec);
+      float sin_yaw = sin(vehicleYawRec);
+
+      float targetX_global = vehicleXRec + cos_yaw * targetX_local - sin_yaw * targetY_local;
+      float targetY_global = vehicleYRec + sin_yaw * targetX_local + cos_yaw * targetY_local;
+
+      // 创建 Marker
+      visualization_msgs::msg::Marker marker;
+      marker.header.frame_id = "base_link";  // 或 "odom"，必须与 path 的 frame_id 一致
+      marker.header.stamp = nh->now();
+      marker.ns = "look_ahead_point";
+      marker.id = 0;
+      marker.type = visualization_msgs::msg::Marker::SPHERE;  // 可选：SPHERE, ARROW, TEXT_VIEW_FACING 等
+      marker.action = visualization_msgs::msg::Marker::ADD;
+
+      marker.pose.position.x = targetX_global;
+      marker.pose.position.y = targetY_global;
+      marker.pose.position.z = 0.0;
+      marker.pose.orientation.x = 0.0;
+      marker.pose.orientation.y = 0.0;
+      marker.pose.orientation.z = 0.0;
+      marker.pose.orientation.w = 1.0;
+
+      marker.scale.x = 0.3;  // 球的直径
+      marker.scale.y = 0.3;
+      marker.scale.z = 0.3;
+
+      marker.color.a = 1.0;  // 透明度
+      marker.color.r = 1.0;  // 红色
+      marker.color.g = 0.0;
+      marker.color.b = 0.0;
+
+      pubMarker->publish(marker);
+
+      // 选定的前瞻目标点 pathPointID
       disX = path.poses[pathPointID].pose.position.x - vehicleXRel;
       disY = path.poses[pathPointID].pose.position.y - vehicleYRel;
       dis = sqrt(disX * disX + disY * disY);
