@@ -525,15 +525,19 @@ int main(int argc, char** argv)
     // 这里雷达的坐标系也需要转换一下
     auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
 
-    auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
-    auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
-
     auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map",5,terrainCloudHandler);
-
-    auto subBoundary = nh->create_subscription<geometry_msgs::msg::PolygonStamped>("/navigation_boundary",5,boundaryHandle);
 
     // NOTE:local planner中订阅的话题是way_point
     auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
+
+    // auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
+    // auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
+
+    auto pubObstacleCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud",5);
+
+
+    auto subBoundary = nh->create_subscription<geometry_msgs::msg::PolygonStamped>("/navigation_boundary",5,boundaryHandle);
+
 
     auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/local_path",5);
 
@@ -612,11 +616,11 @@ int main(int argc, char** argv)
                 // 这里将点云pub出来看看
                 // TAG设置header 并且需要转成ros msg
                 // 其实就是降采样后的点云
-                sensor_msgs::msg::PointCloud2 ros_pc2;
-                pcl::toROSMsg(*plannerCloud,ros_pc2);
-                ros_pc2.header.frame_id = "camera_init";
-                ros_pc2.header.stamp = nh->now();
-                pubLaserCloud->publish(ros_pc2);
+                // sensor_msgs::msg::PointCloud2 ros_pc2;
+                // pcl::toROSMsg(*plannerCloud,ros_pc2);
+                // ros_pc2.header.frame_id = "camera_init";
+                // ros_pc2.header.stamp = nh->now();
+                // pubLaserCloud->publish(ros_pc2);
 
             }
 
@@ -644,19 +648,21 @@ int main(int argc, char** argv)
 
                 float dis = sqrt(point.x * point.x + point.y * point.y);
                 if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
-
+                    // RCLCPP_INFO(nh->get_logger(),"push point");
                     plannerCloudCrop->push_back(point);
                 }
-
             }
+            // RCLCPP_INFO(nh->get_logger(), "plannerCloudSize: %zu, plannerCloudCropSize1: %zu", 
+            //     plannerCloud->points.size(), plannerCloudCrop->points.size());
+
 
             // 将plannerCloud显示出来看一看
             // plannerCloud
-            sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-            pcl::toROSMsg(*plannerCloud,plannerCloudMsg);
-            plannerCloudMsg.header.stamp = nh->get_clock()->now();
-            plannerCloudMsg.header.frame_id = "camera_init";
-            pubLaserCloud2->publish(plannerCloudMsg);
+            // sensor_msgs::msg::PointCloud2 plannerCloudMsg;
+            // pcl::toROSMsg(*plannerCloud,plannerCloudMsg);
+            // plannerCloudMsg.header.stamp = nh->get_clock()->now();
+            // plannerCloudMsg.header.frame_id = "camera_init";
+            // pubLaserCloud2->publish(plannerCloudMsg);
 
             // int boundaryCloudSize = boundaryCloud->
 
@@ -706,11 +712,13 @@ int main(int argc, char** argv)
             //                                  TAG 这里开始设置路径
             while (pathScale >= minPathScale && pathRange >= minPathRange) {
                 // 清空之前的评分器
+                // 总的路径数量 36*pathNum 
                 for (int i = 0; i < 36 * pathNum; i++) 
                 {
                     clearPathList[i] = 0;
                     pathPenaltyList[i] = 0;
                 }
+                // 每个方向有groupNum个路径组 每个路径组对应一组不同形状的轨迹
                 for (int i = 0; i < 36 * groupNum; i++) 
                 {
                     clearPathPerGroupScore[i] = 0;
@@ -722,9 +730,14 @@ int main(int argc, char** argv)
                 float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
                 // 遍历障碍物判断哪些路径会被阻挡
 
+                // TAG:添加obstacleVisCloud标记哪些被识别成了障碍物
+                pcl::PointCloud<pcl::PointXYZI>::Ptr obstacleVisCloud(new pcl::PointCloud<pcl::PointXYZI>());
+
+                // plannerCloudCrop 障碍物点云
                 int plannerCloudCropSize = plannerCloudCrop->points.size();
                 // 遍历局部感知点云
                 // 这里是通过 plannerCloudCrop 来判断的
+
                 for (int i = 0; i < plannerCloudCropSize; i++)
                 {
                     // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
@@ -734,14 +747,32 @@ int main(int argc, char** argv)
                     // 检查plannerCloudCrop没有问题
                     float dis = std::sqrt(x*x + y*y);
 
+                    // TAG 
+                    bool cond1 = dis < pathRange / pathScale;
+                    bool cond2 = (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal);
+                    bool cond3 = checkObstacle;
+
+                    if (!(cond1 && cond2 && cond3))
+                    {
+                        RCLCPP_WARN(nh->get_logger(),
+                            "skip point: dis=%.3f pathRange/pathScale=%.3f relGoalDis=(%.3f+%.3f)/%.3f=%.3f pathCropByGoal=%d checkObstacle=%d -> cond1=%d cond2=%d cond3=%d",
+                            dis, pathRange / pathScale,
+                            relativeGoalDis, goalClearRange, pathScale, (relativeGoalDis + goalClearRange) / pathScale,
+                            pathCropByGoal, checkObstacle,
+                            cond1, cond2, cond3);
+                    }
+
                     // 判断条件：1.小于路径宽度（点云在车辆检测范围内）2.代检测点到车辆距离dis小于车到目标点距离（离目标太远无意义） 3.启动障碍物检测的点
                     if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
                     {
+                        RCLCPP_INFO(nh->get_logger(),"dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange)");
+
                         // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
                         for (int rotDir = 0; rotDir < 36; rotDir++) 
                         {
                             // 每个旋转方向 当前位置转路径点的角度 
                             float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                            // 当前候选路径方向（rotDir）与目标方向（joyDir）之间的角度差
                             float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
                         if (angDiff > 180.0) 
                         {
@@ -750,16 +781,21 @@ int main(int argc, char** argv)
                         if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
                             ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) 
                         {
+                            // (angDiff > dirThre && !dirToVehicle) 不允许倒车 候选路径与目标方向的偏差大于阈值 dirThre
+                            // 
                             continue;
                         }
 
                         // HACK没有很理解
+                        // 这下面的x和y都在camera init下面
+                        // 将x2 y2旋转rotAng
+                        // x2 在候选路径方向上（路径前方）的投影距离
                         float x2 = cos(rotAng) * x + sin(rotAng) * y;
                         float y2 = -sin(rotAng) * x + cos(rotAng) * y;
                         float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
                         * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
                         
-                        // 计算该plannerCloudCropSize（i）点云对应的体素网格的索引（体素网格下包含searchRadius范围内的path_id）
+                        // 计算该 plannerCloudCropSize（i） 点云对应的体素网格的索引（体素网格下包含searchRadius范围内的path_id）
                         int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
                         int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
 
@@ -768,12 +804,21 @@ int main(int argc, char** argv)
                             // 二维索引映射到一维
                             int ind = gridVoxelNumY * indX + indY;
                             int blockedPathByVoxelNum = correspondences[ind].size();
+                            RCLCPP_INFO(nh->get_logger(),"indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY");
                             for (int j = 0; j < blockedPathByVoxelNum; j++) 
                             {
                                 // 如果是高障碍 增加clearPathList计数
+                                RCLCPP_INFO(nh->get_logger(),"for (int j = 0; j < blockedPathByVoxelNum; j++)");
                                 if (h > obstacleHeightThre || !useTerrainAnalysis) 
                                 {
+                                    RCLCPP_INFO(nh->get_logger(),"h > obstacleHeightThre || !useTerrainAnalysis");
                                     clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
+                                    pcl::PointXYZI p;
+                                    p.x = plannerCloudCrop->points[i].x;
+                                    p.y = plannerCloudCrop->points[i].y;
+                                    p.z = plannerCloudCrop->points[i].z;
+                                    p.intensity = 200;  // 障碍点高亮
+                                    obstacleVisCloud->push_back(p);
                                 } else {
                                     // 其余情况不算阻挡但是增加路径的惩罚
                                     if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) 
@@ -801,6 +846,13 @@ int main(int argc, char** argv)
                     }
                     // RCLCPP_INFO(nh->get_logger(),"pathScale >= minPathScale && pathRange >= minPathRange");
                 }
+
+                // TAG发布障碍物点云
+                sensor_msgs::msg::PointCloud2 visMsg;
+                pcl::toROSMsg(*obstacleVisCloud, visMsg);
+                visMsg.header.frame_id = "camera_init";
+                visMsg.header.stamp = nh->now();
+                pubObstacleCloud->publish(visMsg);
 
                 if (minObsAngCW > 0)
                 {
@@ -980,6 +1032,9 @@ int main(int argc, char** argv)
                 }
             }
             pathScale = defPathScale;
+
+            // rclcpp::info(rclcpp::get_logger("example_logger"), "Path found: %s", pathFound ? "true" : "false");4
+            // RCLCPP_INFO(nh->get_logger(),"Path found: %s", pathFound ? "true" : "false");
 
             if (!pathFound) {
                 path.poses.resize(1);
