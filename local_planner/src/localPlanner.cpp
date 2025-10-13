@@ -595,7 +595,7 @@ int main(int argc, char** argv)
         {
             if (newlaserCloud)
             {
-                // RCLCPP_INFO(nh->get_logger(),"new laser cloud");
+                RCLCPP_INFO(nh->get_logger(),"new laser cloud");
                 newlaserCloud = false;
     
                 // laserCloudStack是个长度为1的点云数组
@@ -609,25 +609,26 @@ int main(int argc, char** argv)
                     *plannerCloud += *laserCloudStack[i];
                     
                 }
-                // 这里将点云pub出来看看
-                // TAG设置header 并且需要转成ros msg
-                // 其实就是降采样后的点云
-                sensor_msgs::msg::PointCloud2 ros_pc2;
-                pcl::toROSMsg(*plannerCloud,ros_pc2);
-                ros_pc2.header.frame_id = "camera_init";
-                ros_pc2.header.stamp = nh->now();
-                pubLaserCloud->publish(ros_pc2);
-
+                
             }
-
+            
             if (newTerrainCloud)
             {
-                // RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
+                RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
                 newTerrainCloud = false;
-
+                
                 plannerCloud->clear();
                 *plannerCloud = *terrainCloudDwz;
             }
+
+            // 这里将点云pub出来看看
+            // TAG设置header 并且需要转成ros msg 这里应该设置在 newlaserCloud和newTerrainCloud后面pub
+            // 其实就是降采样后的点云
+            sensor_msgs::msg::PointCloud2 ros_pc2;
+            pcl::toROSMsg(*plannerCloud,ros_pc2);
+            ros_pc2.header.frame_id = "camera_init";
+            ros_pc2.header.stamp = nh->now();
+            pubLaserCloud->publish(ros_pc2);
             
             float sinVehicleYaw = sin(vehicleYaw);
             float cosVehicleYaw = cos(vehicleYaw);
