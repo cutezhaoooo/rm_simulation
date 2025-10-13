@@ -530,7 +530,7 @@ int main(int argc, char** argv)
     // NOTE:local planner中订阅的话题是way_point
     auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
 
-    // auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
+    auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
     auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
 
     auto pubObstacleCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud",5);
@@ -616,11 +616,11 @@ int main(int argc, char** argv)
                 // 这里将点云pub出来看看
                 // TAG设置header 并且需要转成ros msg
                 // 其实就是降采样后的点云
-                // sensor_msgs::msg::PointCloud2 ros_pc2;
-                // pcl::toROSMsg(*plannerCloud,ros_pc2);
-                // ros_pc2.header.frame_id = "camera_init";
-                // ros_pc2.header.stamp = nh->now();
-                // pubLaserCloud->publish(ros_pc2);
+                sensor_msgs::msg::PointCloud2 ros_pc2;
+                pcl::toROSMsg(*plannerCloud,ros_pc2);
+                ros_pc2.header.frame_id = "camera_init";
+                ros_pc2.header.stamp = nh->now();
+                pubLaserCloud->publish(ros_pc2);
 
             }
 
