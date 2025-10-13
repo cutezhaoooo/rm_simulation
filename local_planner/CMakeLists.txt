@@ -11,6 +11,12 @@ endif()
 
 # 确保生成调试信息
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0")
+# 设置NLOPT的路径
+set(NLOPT_INCLUDE_DIRS "/usr/include/")
+set(NLOPT_LIBRARIES "/usr/lib/x86_64-linux-gnu/libnlopt_cxx.so")
+include_directories(
+  ${NLOPT_INCLUDE_DIRS}
+)
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
@@ -26,17 +32,25 @@ find_package(message_filters REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(angles REQUIRED)
+
 
 add_executable(localPlanner src/localPlanner.cpp)
 add_executable(pathFollower src/pathFollower.cpp)
+add_executable(mpcController src/mpcController.cpp)
 ament_target_dependencies(localPlanner rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
 ament_target_dependencies(pathFollower rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions visualization_msgs)
+ament_target_dependencies(mpcController rclcpp nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs angles visualization_msgs)
 
-
+# 链接NLOPT库
+target_link_libraries(mpcController
+  nlopt
+)
 
 install(TARGETS
   localPlanner
   pathFollower
+  mpcController
   DESTINATION lib/${PROJECT_NAME})
 
 install(

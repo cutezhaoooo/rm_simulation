@@ -531,7 +531,7 @@ int main(int argc, char** argv)
     auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped>("/way_point",5,goalHandler);
 
     // auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud",5);
-    // auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
+    auto pubLaserCloud2 = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner",5);
 
     auto pubObstacleCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud",5);
 
@@ -658,11 +658,21 @@ int main(int argc, char** argv)
 
             // 将plannerCloud显示出来看一看
             // plannerCloud
-            // sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-            // pcl::toROSMsg(*plannerCloud,plannerCloudMsg);
-            // plannerCloudMsg.header.stamp = nh->get_clock()->now();
-            // plannerCloudMsg.header.frame_id = "camera_init";
-            // pubLaserCloud2->publish(plannerCloudMsg);
+            sensor_msgs::msg::PointCloud2 plannerCloudMsg;
+            pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
+            plannerCloudMsg.header.stamp = nh->get_clock()->now();
+            plannerCloudMsg.header.frame_id = "camera_init";
+            pubLaserCloud2->publish(plannerCloudMsg);
+
+            RCLCPP_INFO(nh->get_logger(), "plannerCloudCrop size = %d", plannerCloudCrop->points.size());
+            float minDis = 999, maxDis = 0;
+            for (auto &p : plannerCloudCrop->points) {
+                float d = sqrt(p.x * p.x + p.y * p.y);
+                if (d < minDis) minDis = d;
+                if (d > maxDis) maxDis = d;
+            }
+            RCLCPP_INFO(nh->get_logger(), "[Cloud Stats] minDis=%.3f  maxDis=%.3f", minDis, maxDis);
+
 
             // int boundaryCloudSize = boundaryCloud->
 
@@ -738,6 +748,7 @@ int main(int argc, char** argv)
                 // 遍历局部感知点云
                 // 这里是通过 plannerCloudCrop 来判断的
 
+
                 for (int i = 0; i < plannerCloudCropSize; i++)
                 {
                     // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
@@ -749,19 +760,28 @@ int main(int argc, char** argv)
 
                     // TAG 
                     bool cond1 = dis < pathRange / pathScale;
+                    // false || true
                     bool cond2 = (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal);
                     bool cond3 = checkObstacle;
 
-                    if (!(cond1 && cond2 && cond3))
-                    {
-                        RCLCPP_WARN(nh->get_logger(),
-                            "skip point: dis=%.3f pathRange/pathScale=%.3f relGoalDis=(%.3f+%.3f)/%.3f=%.3f pathCropByGoal=%d checkObstacle=%d -> cond1=%d cond2=%d cond3=%d",
-                            dis, pathRange / pathScale,
-                            relativeGoalDis, goalClearRange, pathScale, (relativeGoalDis + goalClearRange) / pathScale,
-                            pathCropByGoal, checkObstacle,
-                            cond1, cond2, cond3);
-                    }
+                    // RCLCPP_INFO(nh->get_logger(),
+                    //     "[DEBUG] point[%d]: dis=%.3f  rangeLmt=%.3f  goalLmt=%.3f  relGoalDis=%.3f  goalClearRange=%.3f  pathScale=%.3f",
+                    //     i, dis, pathRange / pathScale, (relativeGoalDis + goalClearRange) / pathScale,
+                    //     relativeGoalDis, goalClearRange, pathScale);
 
+                    // RCLCPP_INFO(nh->get_logger(),
+                    //     "          cond1(dis<range)= %d | cond2(goalCrop)= %d | cond3(checkObs)= %d | pathCropByGoal=%d",
+                    //     cond1, cond2, cond3, pathCropByGoal);
+
+                    // // 统计skip情况
+                    // if (!(cond1 && cond2 && cond3)) {
+                    //     RCLCPP_WARN(nh->get_logger(),
+                    //         "[WARN] skip point[%d]: dis=%.3f  (cond1=%d cond2=%d cond3=%d) | rangeLmt=%.3f goalLmt=%.3f checkObs=%d",
+                    //         i, dis, cond1, cond2, cond3, pathRange / pathScale,
+                    //         (relativeGoalDis + goalClearRange) / pathScale, checkObstacle);
+                    // }
+                    
+                    // NOTE:现在的问题是距离过远 导致被过滤掉
                     // 判断条件：1.小于路径宽度（点云在车辆检测范围内）2.代检测点到车辆距离dis小于车到目标点距离（离目标太远无意义） 3.启动障碍物检测的点
                     if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
                     {
