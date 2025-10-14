@@ -54,7 +54,7 @@
     <param name="goalY" value="$(var goalY)" /> 
   </node>
   
-  <!-- <node pkg="local_planner" exec="pathFollower" name="pathFollower" output="screen">
+   <!-- <node pkg="local_planner" exec="pathFollower" name="pathFollower" output="screen">
     <param name="sensorOffsetX" value="$(var sensorOffsetX)" />
     <param name="sensorOffsetY" value="$(var sensorOffsetY)" />
     <param name="pubSkipNum" value="1" />
@@ -83,7 +83,7 @@
     <param name="autonomyMode" value="$(var autonomyMode)" />
     <param name="autonomySpeed" value="$(var autonomySpeed)" />
     <param name="joyToSpeedDelay" value="$(var joyToSpeedDelay)" />
-  </node>   -->
+  </node>     -->
 
   <!-- <node pkg="tf2_ros" exec="static_transform_publisher" name="vehicleTransPublisher" args="-$(var sensorOffsetX) -$(var sensorOffsetY) 0 0 0 0 /sensor /vehicle"/> -->
 

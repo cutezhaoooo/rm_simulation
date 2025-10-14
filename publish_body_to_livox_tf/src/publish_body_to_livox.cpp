@@ -14,7 +14,8 @@ public:
 
     // 设置 body → dummy 的恒等变换
     transform_.header.frame_id = "body";
-    transform_.child_frame_id = "dummy";
+    // transform_.child_frame_id = "dummy";
+    transform_.child_frame_id = "base_link";
     transform_.transform.translation.x = -0.12;
     transform_.transform.translation.y = 0.0;
     transform_.transform.translation.z = -0.175;
