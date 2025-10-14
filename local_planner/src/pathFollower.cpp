@@ -249,9 +249,9 @@ int main(int argc, char** argv)
   nh->get_parameter("autonomySpeed", autonomySpeed);
   nh->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
 
-  auto subOdom = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odomHandler);
+  auto subOdom = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry", 5, odomHandler);
 
-  auto subPath = nh->create_subscription<nav_msgs::msg::Path>("/path", 5, pathHandler);
+  auto subPath = nh->create_subscription<nav_msgs::msg::Path>("/local_path", 5, pathHandler);
 
   auto subJoystick = nh->create_subscription<sensor_msgs::msg::Joy>("/joy", 5, joystickHandler);
 

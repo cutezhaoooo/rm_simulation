@@ -142,6 +142,14 @@ pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum];
 pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths(new pcl::PointCloud<pcl::PointXYZI>());
 #endif
 
+
+
+static int lastSelectedGroupID = -1;  // 保存上一帧选择
+
+float maxScore = 0;
+int selectedGroupID = -1;
+float scoreThreshold = maxScore * 0.9;  // 得分达到90%就算接近
+
 rclcpp::Node::SharedPtr nh;
 
 void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
@@ -666,7 +674,7 @@ int main(int argc, char** argv)
 
                 // 坐标变换
                 pcl::transformPointCloud(*plannerCloud,*plannerCloudBody,tf_matrix);
-                RCLCPP_INFO(nh->get_logger(),"plannerCloud transformed from camera_init → lbody successfully, points: %zu", plannerCloudBody->points.size());
+                // RCLCPP_INFO(nh->get_logger(),"plannerCloud transformed from camera_init → lbody successfully, points: %zu", plannerCloudBody->points.size());
             }
             catch(const std::exception& e)
             {
@@ -715,7 +723,7 @@ int main(int argc, char** argv)
                 if (d < minDis) minDis = d;
                 if (d > maxDis) maxDis = d;
             }
-            RCLCPP_INFO(nh->get_logger(), "[Cloud Stats] minDis=%.3f  maxDis=%.3f", minDis, maxDis);
+            // RCLCPP_INFO(nh->get_logger(), "[Cloud Stats] minDis=%.3f  maxDis=%.3f", minDis, maxDis);
 
 
             // int boundaryCloudSize = boundaryCloud->
@@ -746,7 +754,7 @@ int main(int argc, char** argv)
                 
 
                 // RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的距离:%f",relativeGoalDis);
-                RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的方向角:%f",joyDir);
+                // RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的方向角:%f",joyDir);
             }
             
             bool pathFound = false;
@@ -917,7 +925,7 @@ int main(int argc, char** argv)
                 // TAG发布障碍物点云
                 sensor_msgs::msg::PointCloud2 visMsg;
                 pcl::toROSMsg(*obstacleVisCloud, visMsg);
-                visMsg.header.frame_id = "camera_init";
+                visMsg.header.frame_id = "base_link";
                 visMsg.header.stamp = nh->now();
                 pubObstacleCloud->publish(visMsg);
 
@@ -997,6 +1005,8 @@ int main(int argc, char** argv)
                 int selectedGroupID = -1;
                 // 遍历所有方向路径组 选出得分最高的可行路径组
                 // groupNum 第一次分裂出来的组数
+
+
                 for (int i = 0; i < 36 * groupNum; i++) {
                     //遍历可选路径（36*7）即（rotdir朝向*第一级group_id）
                     // rotDir路径方向
@@ -1012,6 +1022,31 @@ int main(int argc, char** argv)
                         selectedGroupID = i;
                     }
                 }
+
+                // =============================================================================
+                // TAG 添加历史的惯性
+                for (int i = 0; i < 36 * groupNum; i++) {
+                    if (clearPathPerGroupScore[i] > maxScore)  {
+                        // 如果得分明显更高，直接选
+                        if (clearPathPerGroupScore[i] > scoreThreshold) {
+                            maxScore = clearPathPerGroupScore[i];
+                            selectedGroupID = i;
+                        } 
+                        // 如果得分接近，优先选上一帧的路径
+                        else if (lastSelectedGroupID != -1 && i == lastSelectedGroupID) {
+                            maxScore = clearPathPerGroupScore[i];
+                            selectedGroupID = i;
+                        }
+                    }
+                }
+                // TAG 添加历史的惯性
+
+                // 更新历史选择
+                if (selectedGroupID >= 0) {
+                    lastSelectedGroupID = selectedGroupID;
+                }
+
+                
 
                 // 构造输出路径
                 if (selectedGroupID >= 0) 
