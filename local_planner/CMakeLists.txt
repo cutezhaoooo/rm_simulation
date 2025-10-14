@@ -33,12 +33,13 @@ find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(angles REQUIRED)
+find_package(tf2_eigen REQUIRED)
 
 
 add_executable(localPlanner src/localPlanner.cpp)
 add_executable(pathFollower src/pathFollower.cpp)
 add_executable(mpcController src/mpcController.cpp)
-ament_target_dependencies(localPlanner rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
+ament_target_dependencies(localPlanner rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions tf2_eigen)
 ament_target_dependencies(pathFollower rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions visualization_msgs)
 ament_target_dependencies(mpcController rclcpp nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs angles visualization_msgs)
 
