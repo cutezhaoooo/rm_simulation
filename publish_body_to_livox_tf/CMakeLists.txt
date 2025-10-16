@@ -12,7 +12,13 @@ find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 add_executable(publish_body_to_livox src/publish_body_to_livox.cpp)
+add_executable(map_odom_baselink_livox src/publish_body_to_livox.cpp)
 ament_target_dependencies(publish_body_to_livox
+  rclcpp
+  tf2_ros
+  geometry_msgs
+)
+ament_target_dependencies(map_odom_baselink_livox
   rclcpp
   tf2_ros
   geometry_msgs
@@ -26,6 +32,7 @@ ament_target_dependencies(publish_body_to_livox
 # 安装
 install(TARGETS
   publish_body_to_livox
+  map_odom_baselink_livox
   DESTINATION lib/${PROJECT_NAME}
 )
 
