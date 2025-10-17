@@ -28,13 +28,15 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include "tf2_ros/transform_listener.h"
 
-
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/common/transforms.h>
+
+#include "visualization_msgs/msg/marker.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 
 const double PI = 3.1415926;
 
@@ -439,6 +441,7 @@ void readCorrespondences()
 }
 
 
+
 // TODO需要将free path补充出来 
 int main(int argc, char** argv)
 {
@@ -544,6 +547,7 @@ int main(int argc, char** argv)
 
     auto pubObstacleCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud",5);
 
+    auto pubMarker = nh->create_publisher<visualization_msgs::msg::MarkerArray>("path_debug", 10);
 
     auto subBoundary = nh->create_subscription<geometry_msgs::msg::PolygonStamped>("/navigation_boundary",5,boundaryHandle);
 
@@ -634,7 +638,7 @@ int main(int argc, char** argv)
             
             if (newTerrainCloud)
             {
-                RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
+                // RCLCPP_INFO(nh->get_logger(),"new terrain cloud");
                 newTerrainCloud = false;
                 
                 plannerCloud->clear();
@@ -646,16 +650,9 @@ int main(int argc, char** argv)
             pcl::toROSMsg(*plannerCloud,ros_pc2);
             ros_pc2.header.frame_id = "camera_init";
             ros_pc2.header.stamp = nh->now();
+
             pubLaserCloud->publish(ros_pc2);
 
-            // 这里将点云pub出来看看
-            // TAG设置header 并且需要转成ros msg 这里应该设置在 newlaserCloud和newTerrainCloud后面pub
-            // 其实就是降采样后的点云
-            sensor_msgs::msg::PointCloud2 ros_pc2;
-            pcl::toROSMsg(*plannerCloud,ros_pc2);
-            ros_pc2.header.frame_id = "camera_init";
-            ros_pc2.header.stamp = nh->now();
-            pubLaserCloud->publish(ros_pc2);
             
             float sinVehicleYaw = sin(vehicleYaw);
             float cosVehicleYaw = cos(vehicleYaw);
@@ -676,7 +673,7 @@ int main(int argc, char** argv)
 
                 // 坐标变换
                 pcl::transformPointCloud(*plannerCloud,*plannerCloudBody,tf_matrix);
-                RCLCPP_INFO(nh->get_logger(),"plannerCloud transformed from camera_init → lbody successfully, points: %zu", plannerCloudBody->points.size());
+                // RCLCPP_INFO(nh->get_logger(),"plannerCloud transformed from camera_init → lbody successfully, points: %zu", plannerCloudBody->points.size());
             }
             catch(const std::exception& e)
             {
@@ -702,6 +699,7 @@ int main(int argc, char** argv)
                 float dis = sqrt(point.x * point.x + point.y * point.y);
                 if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
                     // RCLCPP_INFO(nh->get_logger(),"push point");
+                    // 这里的plannerCloudCrop被转换到了 livox frame坐标系下面
                     plannerCloudCrop->push_back(point);
                 }
             }
@@ -714,49 +712,63 @@ int main(int argc, char** argv)
             sensor_msgs::msg::PointCloud2 plannerCloudMsg;
             pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
             plannerCloudMsg.header.stamp = nh->get_clock()->now();
-            plannerCloudMsg.header.frame_id = "body";
+            plannerCloudMsg.header.frame_id = "livox_frame";
             pubLaserCloud2->publish(plannerCloudMsg);
 
             // 计算最近与最远的点云的距离
-            RCLCPP_INFO(nh->get_logger(), "plannerCloudCrop size = %d", plannerCloudCrop->points.size());
+            // RCLCPP_INFO(nh->get_logger(), "plannerCloudCrop size = %ld", plannerCloudCrop->points.size());
             float minDis = 999, maxDis = 0;
             for (auto &p : plannerCloudCrop->points) {
                 float d = sqrt(p.x * p.x + p.y * p.y);
                 if (d < minDis) minDis = d;
                 if (d > maxDis) maxDis = d;
             }
-            RCLCPP_INFO(nh->get_logger(), "[Cloud Stats] minDis=%.3f  maxDis=%.3f", minDis, maxDis);
+            // RCLCPP_INFO(nh->get_logger(), "[Cloud Stats] minDis=%.3f  maxDis=%.3f", minDis, maxDis);
 
 
             // int boundaryCloudSize = boundaryCloud->
 
+            // HACK 这里存在问题
             float pathRange = adjacentRange;
-            if (pathRange)
-            {
-                pathRange = adjacentRange * joySpeed;
-            }
+            // if (pathRange)
+            // {
+            //     pathRange = adjacentRange * joySpeed;
+            // }
+            pathRange = 4.25;
+            
             if (pathRange < minPathRange) 
             {
                 pathRange = minPathRange;
             }
+            // RCLCPP_INFO(nh->get_logger(),"pathRange : %f",pathRange);
+            // RCLCPP_INFO(nh->get_logger(),"adjacentRange : %f",adjacentRange);
             float relativeGoalDis = adjacentRange;
             
             // TODO计算目标角度和距离
             // if (autonomyMode)
             if (true)
             {
-                // 直接用vehicleX和vehicleY去计算即可
-                float relativeGoalX = (goalX - vehicleX) * (goalX - vehicleX);  // x^2
-                float relativeGoalY = (goalY - vehicleY) * (goalY - vehicleY);  // y^2
+                // 假设 transform 是 camera_init -> base_link
+                tf2::Transform T_camera_to_base;
+                tf2::fromMsg(tfBuffer.lookupTransform("camera_init", "base_link", tf2::TimePointZero).transform, T_camera_to_base);
 
-                relativeGoalDis = std::sqrt(relativeGoalX + relativeGoalY );
-                joyDir = std::atan2(relativeGoalY,relativeGoalX) * 180/PI;
-                // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
-                // RCLCPP_INFO(nh->get_logger(),"goalX :%f , goalY :%f",goalX,goalY);
-                
+                // 求逆变换 base_link -> camera_init
+                tf2::Transform T_base_to_camera = T_camera_to_base.inverse();
 
-                // RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的距离:%f",relativeGoalDis);
-                RCLCPP_INFO(nh->get_logger(),"目标点距离车辆的方向角:%f",joyDir);
+                // 目标点在camera坐标系下
+                tf2::Vector3 p_camera(goalX, goalY, 0);
+
+                // 变换到base_link下
+                tf2::Vector3 p_base = T_base_to_camera * p_camera;
+
+                // 计算角度
+                float dx = p_base.x();
+                float dy = p_base.y();
+                // 现在joyDir在base link坐标系下面
+                float joyDir = std::atan2(dy, dx) * 180 / M_PI;
+
+                RCLCPP_INFO(nh->get_logger(),"dx : %.2f , dy: %.2f joyDir: %.2f",dx,dy,joyDir);
+
             }
             
             bool pathFound = false;
@@ -765,7 +777,6 @@ int main(int argc, char** argv)
             if (pathScaleBySpeed)
             {
                 pathScale = defPathScale * joySpeed;
-
             }
             if (pathScale < minPathScale)
             {
@@ -792,7 +803,6 @@ int main(int argc, char** argv)
                 float minObsAngCCW = 180.0;
                 float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
                 float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
-                // 遍历障碍物判断哪些路径会被阻挡
 
                 // TAG:添加obstacleVisCloud标记哪些被识别成了障碍物
                 pcl::PointCloud<pcl::PointXYZI>::Ptr obstacleVisCloud(new pcl::PointCloud<pcl::PointXYZI>());
@@ -860,8 +870,7 @@ int main(int argc, char** argv)
                             continue;
                         }
 
-                        // HACK没有很理解
-                        // 这下面的x和y都在camera init下面
+                        // x y 是 livox frame 坐标系下面的
                         // 将x2 y2旋转rotAng
                         // x2 在候选路径方向上（路径前方）的投影距离
                         float x2 = cos(rotAng) * x + sin(rotAng) * y;
@@ -913,6 +922,9 @@ int main(int argc, char** argv)
                         (h > obstacleHeightThre || !useTerrainAnalysis) && checkRotObstacle) 
                     {
                         float angObs = atan2(y, x) * 180.0 / PI;
+                        
+                        RCLCPP_INFO(nh->get_logger(),"angObs %d",angObs);
+                        // 这里的判断语句从来没有进入过
                         if (angObs > 0) {
                         if (minObsAngCCW > angObs - angOffset) minObsAngCCW = angObs - angOffset;
                         if (minObsAngCW < angObs + angOffset - 180.0) minObsAngCW = angObs + angOffset - 180.0;
@@ -927,7 +939,8 @@ int main(int argc, char** argv)
                 // TAG发布障碍物点云
                 sensor_msgs::msg::PointCloud2 visMsg;
                 pcl::toROSMsg(*obstacleVisCloud, visMsg);
-                visMsg.header.frame_id = "camera_init";
+                // 有点理解为什么要求全都转到camera init坐标系下面了
+                visMsg.header.frame_id = "livox_frame";
                 visMsg.header.stamp = nh->now();
                 pubObstacleCloud->publish(visMsg);
 
@@ -941,10 +954,11 @@ int main(int argc, char** argv)
                     minObsAngCCW = 0;
                 }
                 
+                
+                visualization_msgs::msg::MarkerArray markerArray;
                 for (int i = 0; i < 36 * pathNum; i++) {
                     int rotDir = int(i / pathNum);
                     
-                    // joyDir 最大值就是90 joyDir是车辆到目标点的夹角
                     float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
                     if (angDiff > 180.0) {
                         angDiff = 360.0 - angDiff;
@@ -957,16 +971,18 @@ int main(int argc, char** argv)
 
                     // 对候选路径进行打分
                     // 第i条路检测到的障碍物的数量
-                    if (clearPathList[i] < pointPerPathThre) {
+                    // if (clearPathList[i] < pointPerPathThre) 
+                    if (true) 
+                    {
                         // pathPenaltyList是路径的地形代价 障碍惩罚或者高度惩罚
                         float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
                         // 保底分
                         if (penaltyScore < costScore)
                         {
                             penaltyScore = costScore;
-                        } 
-                            
-                        // 当前目标方向与候选路径的事迹方向之间的角度差
+                        }
+                        
+                        // 当前目标方向与候选路径的实际方向之间的角度差
                         float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
                         // 限制在0~180
                         if (dirDiff > 360.0) {
@@ -975,6 +991,54 @@ int main(int argc, char** argv)
                         if (dirDiff > 180.0) {
                             dirDiff = 360.0 - dirDiff;
                         }
+
+                        if (rotDir % 5 == 0 && i % pathNum == 0) 
+                        {
+                            visualization_msgs::msg::Marker m;
+                            m.header.frame_id = "livox_frame";
+                            m.header.stamp = nh->now();
+                            m.ns = "dir_diff";
+                            m.id = rotDir;
+                            m.type = visualization_msgs::msg::Marker::ARROW;
+                            m.action = visualization_msgs::msg::Marker::ADD;
+                            m.scale.x = 0.5;
+                            m.scale.y = 0.05;
+                            m.scale.z = 0.05;
+                            m.color.r = 0.0;
+                            m.color.g = 0.8;
+                            m.color.b = 1.0;
+                            m.color.a = 0.8;
+
+                            geometry_msgs::msg::Point p0, p1;
+                            p0.x = 0.0;
+                            p0.y = 0.0;
+                            p1.x = 2.0 * cos((10.0 * rotDir - 180.0) * M_PI / 180.0);
+                            p1.y = 2.0 * sin((10.0 * rotDir - 180.0) * M_PI / 180.0);
+                            m.points.push_back(p0);
+                            m.points.push_back(p1);
+
+                            visualization_msgs::msg::Marker text;
+                            text.header = m.header;
+                            text.ns = "dir_diff_text";
+                            text.id = 100 + rotDir;
+                            text.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+                            text.action = visualization_msgs::msg::Marker::ADD;
+                            text.pose.position.x = p1.x;
+                            text.pose.position.y = p1.y;
+                            text.pose.position.z = 0.5;
+                            text.scale.z = 0.3;
+                            text.color.r = 1.0;
+                            text.color.g = 1.0;
+                            text.color.b = 1.0;
+                            text.color.a = 1.0;
+                            text.text = std::to_string((int)dirDiff) + "°";
+
+                            markerArray.markers.push_back(m);
+                            markerArray.markers.push_back(text);
+                        }
+
+
+
 
                         float rotDirW;
                         if (rotDir < 18) 
@@ -1000,8 +1064,15 @@ int main(int argc, char** argv)
                         //     RCLCPP_INFO(nh->get_logger(), "%s", ss.str().c_str());
                         // }
 
+                        if (!markerArray.markers.empty()) 
+                        {
+                            pubMarker->publish(markerArray);
+                        }
                     }
                 }
+
+ 
+
                 
                 float maxScore = 0;
                 int selectedGroupID = -1;
