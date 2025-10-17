@@ -4,7 +4,7 @@
 
 [submodule "livox_ros_driver2"]
     path = livox_ros_driver2
-    url = https://github.com/cutezhaoooo/livox_ros_driver2.git
+	url = https://github.com/SMBU-PolarBear-Robotics-Team/livox_ros_driver2.git
 
 [submodule "FAST_LIO"]
     path = FAST_LIO
