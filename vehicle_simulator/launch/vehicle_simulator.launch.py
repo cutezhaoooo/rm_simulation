@@ -73,33 +73,33 @@ def generate_launch_description():
   start_vehicle_simulator = Node(
     package='vehicle_simulator', 
     executable='vehicleSimulator',
-    # parameters=[
-    #   {
-    #     'use_gazebo_time': False,
-    #     'sensorOffsetX': sensorOffsetX,
-    #     'sensorOffsetY': sensorOffsetY,
-    #     'vehicleHeight': vehicleHeight,
-    #     'cameraOffsetZ': cameraOffsetZ,
-    #     'vehicleX': vehicleX,
-    #     'vehicleY': vehicleY,
-    #     'vehicleZ': vehicleZ,
-    #     'terrainZ': terrainZ,
-    #     'vehicleYaw': vehicleYaw,
-    #     'terrainVoxelSize': terrainVoxelSize,
-    #     'groundHeightThre': groundHeightThre,
-    #     'adjustZ': adjustZ,
-    #     'terrainRadiusZ': terrainRadiusZ,
-    #     'minTerrainPointNumZ': minTerrainPointNumZ,
-    #     'smoothRateZ': smoothRateZ,
-    #     'adjustIncl': adjustIncl,
-    #     'terrainRadiusIncl': terrainRadiusIncl,
-    #     'minTerrainPointNumIncl': minTerrainPointNumIncl,
-    #     'smoothRateIncl': smoothRateIncl,
-    #     'InclFittingThre': InclFittingThre,
-    #     'maxIncl': maxIncl,
-    #     'use_sim_time': use_sim_time
-    #   }
-    #   ],
+    parameters=[
+      {
+        'use_gazebo_time': True,
+        'sensorOffsetX': sensorOffsetX,
+        'sensorOffsetY': sensorOffsetY,
+        'vehicleHeight': vehicleHeight,
+        'cameraOffsetZ': cameraOffsetZ,
+        'vehicleX': vehicleX,
+        'vehicleY': vehicleY,
+        'vehicleZ': vehicleZ,
+        'terrainZ': terrainZ,
+        'vehicleYaw': vehicleYaw,
+        'terrainVoxelSize': terrainVoxelSize,
+        'groundHeightThre': groundHeightThre,
+        'adjustZ': adjustZ,
+        'terrainRadiusZ': terrainRadiusZ,
+        'minTerrainPointNumZ': minTerrainPointNumZ,
+        'smoothRateZ': smoothRateZ,
+        'adjustIncl': adjustIncl,
+        'terrainRadiusIncl': terrainRadiusIncl,
+        'minTerrainPointNumIncl': minTerrainPointNumIncl,
+        'smoothRateIncl': smoothRateIncl,
+        'InclFittingThre': InclFittingThre,
+        'maxIncl': maxIncl,
+        'use_sim_time': use_sim_time
+      }
+      ],
       output='screen'
   )
 
