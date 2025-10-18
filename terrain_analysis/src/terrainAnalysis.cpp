@@ -138,6 +138,7 @@ void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     vehicleRoll = roll;
     vehiclePitch  = pitch;
     vehicleYaw = yaw;
+    // NOTE:这里的vehicleX是通过camera init->body计算出来的
     vehicleX = odom->pose.pose.position.x;
     vehicleY = odom->pose.pose.position.y;
     vehicleZ = odom->pose.pose.position.z;
@@ -182,6 +183,7 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
     pcl::fromROSMsg(*laserCloud2,*laserCloud);
 
     pcl::PointXYZI point;
+    // NOTE:这里的laserCloudCrop在livox frame坐标系下面
     laserCloudCrop->clear();
     int laserCloudSize = laserCloud->points.size();
     for (int i = 0; i < laserCloudSize; i++)
@@ -481,7 +483,7 @@ int main(int argc, char **argv)
                     sensor_msgs::msg::PointCloud2 refreshCloud;
                     pcl::toROSMsg(*terrainVoxelCloudPtr,refreshCloud);
                     refreshCloud.header.stamp = nh->get_clock()->now();
-                    refreshCloud.header.frame_id = "camera_init";
+                    refreshCloud.header.frame_id = "map";
                     // pubRefreshCloud->publish(refreshCloud);
 
                     terrainVoxelUpdateNum[ind] = 0;
@@ -503,7 +505,7 @@ int main(int argc, char **argv)
             // TAG测试
             sensor_msgs::msg::PointCloud2 centerCloud;
             pcl::toROSMsg(*terrainCloud,centerCloud);
-            centerCloud.header.frame_id = "camera_init";
+            centerCloud.header.frame_id = "map";
             centerCloud.header.stamp = nh->get_clock()->now();
             pubCenterCloud->publish(centerCloud);
             
@@ -817,10 +819,9 @@ int main(int argc, char **argv)
             sensor_msgs::msg::PointCloud2 terrainCloud2;
             pcl::toROSMsg(*terrainCloudElev, terrainCloud2);
             terrainCloud2.header.stamp = rclcpp::Time(static_cast<uint64_t>(laserCloudTime * 1e9));
-            terrainCloud2.header.frame_id = "camera_init";
+            terrainCloud2.header.frame_id = "map";
             pubLaserCloud->publish(terrainCloud2);
             
-
         }
 
         status = rclcpp::ok();

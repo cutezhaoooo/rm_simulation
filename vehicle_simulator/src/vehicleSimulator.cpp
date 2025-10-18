@@ -195,7 +195,7 @@ int main(int argc, char** argv)
     auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
 
     // nh->declare_parameter("use_sim_time", true);
-    nh->set_parameter(rclcpp::Parameter("use_sim_time", true));
+    nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
 
 
     rclcpp::Rate rate(200);
