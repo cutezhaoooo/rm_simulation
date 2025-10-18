@@ -75,7 +75,7 @@ def generate_launch_description():
     executable='vehicleSimulator',
     parameters=[
       {
-        'use_gazebo_time': True,
+        'use_gazebo_time': False,
         'sensorOffsetX': sensorOffsetX,
         'sensorOffsetY': sensorOffsetY,
         'vehicleHeight': vehicleHeight,
