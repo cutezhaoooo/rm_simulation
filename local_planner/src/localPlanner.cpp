@@ -726,6 +726,95 @@ private:
         }
     }
 
+
+    // 在类的私有成员中添加
+    void visualizeDirectionDifferences(float joyDir, float pathRange)
+    {
+        visualization_msgs::msg::MarkerArray marker_array;
+        
+        // 清除之前的标记
+        visualization_msgs::msg::Marker clear_marker;
+        clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
+        marker_array.markers.push_back(clear_marker);
+        
+        // 为每个方向创建标记
+        for (int rotDir = 0; rotDir < 36; rotDir++)
+        {
+            float directionAngle = 10.0 * rotDir - 180.0; // 方向角度
+            float angDiff = fabs(joyDir - directionAngle); // 角度差
+            
+            // 规范化角度差到 [0, 180]
+            if (angDiff > 180) {
+                angDiff = 360 - angDiff;
+            }
+            
+            // 创建文本标记
+            visualization_msgs::msg::Marker text_marker;
+            text_marker.header.frame_id = "base_link"; // 使用车辆坐标系
+            text_marker.header.stamp = this->now();
+            text_marker.ns = "direction_differences";
+            text_marker.id = rotDir;
+            text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+            text_marker.action = visualization_msgs::msg::Marker::ADD;
+            
+            // 计算标记位置（在车辆周围的圆上）
+            float angle_rad = directionAngle * PI / 180.0;
+            float radius = pathRange * 0.8; // 使用路径范围的80%作为显示半径
+            text_marker.pose.position.x = radius * cos(angle_rad);
+            text_marker.pose.position.y = radius * sin(angle_rad);
+            text_marker.pose.position.z = 1.0; // 稍微抬高避免与地面重叠
+            
+            // 设置文本内容
+            text_marker.text = std::to_string(static_cast<int>(angDiff)) + "°";
+            
+            // 根据角度差设置颜色（角度差越小，颜色越绿）
+            text_marker.scale.z = 0.3; // 文本大小
+            text_marker.color.a = 1.0; // 不透明度
+            
+            // 颜色映射：0°=绿色，180°=红色
+            float color_ratio = angDiff / 180.0;
+            text_marker.color.r = color_ratio;     // 红色分量
+            text_marker.color.g = 1.0 - color_ratio; // 绿色分量
+            text_marker.color.b = 0.0;             // 蓝色分量
+            
+            marker_array.markers.push_back(text_marker);
+            
+            // 可选：添加方向箭头
+            visualization_msgs::msg::Marker arrow_marker;
+            arrow_marker.header.frame_id = "base_link";
+            arrow_marker.header.stamp = this->now();
+            arrow_marker.ns = "direction_arrows";
+            arrow_marker.id = rotDir;
+            arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
+            arrow_marker.action = visualization_msgs::msg::Marker::ADD;
+            
+            // 箭头起始位置
+            arrow_marker.pose.position.x = 0;
+            arrow_marker.pose.position.y = 0;
+            arrow_marker.pose.position.z = 0.5;
+            
+            // 设置箭头方向
+            tf2::Quaternion quat;
+            quat.setRPY(0, 0, angle_rad);
+            arrow_marker.pose.orientation = tf2::toMsg(quat);
+            
+            // 设置箭头大小和颜色
+            arrow_marker.scale.x = radius * 0.8; // 箭头长度
+            arrow_marker.scale.y = 0.1;          // 箭头宽度
+            arrow_marker.scale.z = 0.1;          // 箭头高度
+            
+            arrow_marker.color.a = 0.5; // 半透明
+            arrow_marker.color.r = color_ratio;
+            arrow_marker.color.g = 1.0 - color_ratio;
+            arrow_marker.color.b = 0.0;
+            
+            marker_array.markers.push_back(arrow_marker);
+        }
+        
+        // 发布标记数组
+        pubMarker->publish(marker_array);
+    }
+
     void processData()
     {
         if (newlaserCloud || newTerrainCloud)
@@ -828,11 +917,72 @@ private:
             }
         }
 
-        bool pathFind = false;
         // ===========================================================================
         //                              TAG开始设置路径
-        
+        bool pathFind = false;
+        float defPathScale = pathScale;
+        // 没有理会这里是什么意思
+        if (pathScaleBySpeed)
+        {
+            pathScale = defPathScale * joySpeed;
+        }
+        if (pathScale < minPathScale)
+        {
+            pathScale = minPathScale;
+        }
+        while (pathScale >= minPathScale && pathRange >= minPathRange) 
+        {
+            // 清空之前的评分器
+            for (int i = 0; i < 36 * pathNum; i++) 
+            {
+                clearPathList[i] = 0;
+                pathPenaltyList[i] = 0;
+            }
 
+            // 每个方向都有gropNum个路径组 每个路径组对应一组不同形状的轨迹
+            for (int i = 0; i < 36 * groupNum; i++)
+            {
+                clearPathPerGroupScore[i] = 0;
+            }
+
+            float minObsAngCW = -180.0;
+            float minObsAngCCW = 180.0;
+            float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
+            float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
+
+            pcl::PointCloud<pcl::PointXYZI>::Ptr obstacleVisCloud(new pcl::PointCloud<pcl::PointXYZI>());
+            // 障碍物点云
+            int plannerCloudCropSize = plannerCloudCrop->points.size();
+            for (int i = 0; i < plannerCloudCropSize; i++)
+            {
+                // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
+                // plannerCloudCrop是map坐标系下面的
+                float x = plannerCloudCrop->points[i].x / pathScale;
+                float y = plannerCloudCrop->points[i].y / pathScale;
+                float h = plannerCloudCrop->points[i].intensity;
+
+                float dis = std::sqrt(x*x + y*y);
+
+                if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
+                {
+                    // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
+                    for (int rotDir = 0; rotDir < 36; rotDir++)
+                    {
+                        // 每个旋转方向 当前位置转路径点的角度 
+                        float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+                        // 当前候选路径方向（rotDir）与目标方向（joyDir）之间的角度差
+                        float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+                    }
+                    
+                }
+
+            }
+
+            // 可视化角度差
+            visualizeDirectionDifferences(joyDir, pathRange);
+            
+        }
+        
     }
 
 };
