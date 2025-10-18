@@ -7,6 +7,9 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource, Fro
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration 
 
+
+
+
 def generate_launch_description():
     # world_name = LaunchConfiguration('world_name')
     vehicleHeight = LaunchConfiguration('vehicleHeight')
@@ -29,12 +32,14 @@ def generate_launch_description():
     declare_vehicleYaw = DeclareLaunchArgument('vehicleYaw', default_value='0.0', description='')
     declare_gazebo_gui = DeclareLaunchArgument('gazebo_gui', default_value='false', description='')
     declare_checkTerrainConn = DeclareLaunchArgument('checkTerrainConn', default_value='true', description='')
+
+
     
     # 还需要启动一个 tf 
     start_tf = Node(
         package='publish_body_to_livox_tf',
-        executable='publish_body_to_livox',
-        name='publish_body_to_livox'
+        executable='map_odom_baselink_livox',
+        name='map_odom_baselink_livox'
     )
 
 
@@ -51,6 +56,7 @@ def generate_launch_description():
         'terrainZ': terrainZ,
         'vehicleYaw': vehicleYaw,
         'gui': gazebo_gui,
+        'use_sim_time': 'False'
         }.items()
     )
 
@@ -62,13 +68,17 @@ def generate_launch_description():
 
 
     start_local_planner = IncludeLaunchDescription(
-        FrontendLaunchDescriptionSource(os.path.join(
-        get_package_share_directory('local_planner'), 'launch', 'local_planner.launch')
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('local_planner'),
+                'launch',
+                'local_planner.launch.py'
+            )
         ),
         launch_arguments={
-        'cameraOffsetZ': cameraOffsetZ,
-        'goalX': vehicleX,
-        'goalY': vehicleY,
+            'cameraOffsetZ': cameraOffsetZ,
+            'goalX': vehicleX,
+            'goalY': vehicleY,
         }.items()
     )
 
@@ -129,6 +139,7 @@ def generate_launch_description():
 
     # Add the actions
     # ld.add_action(declare_world_name)
+    # ld.add_action(SetParameter(name='use_sim_time', value=False))
     ld.add_action(declare_vehicleHeight)
     ld.add_action(declare_cameraOffsetZ)
     ld.add_action(declare_vehicleX)
@@ -139,11 +150,12 @@ def generate_launch_description():
     ld.add_action(declare_gazebo_gui)
     ld.add_action(declare_checkTerrainConn)
 
+
     ld.add_action(start_tf)
-    ld.add_action(start_local_planner)
-    ld.add_action(start_terrain_analysis)
-    # ld.add_action(start_terrain_analysis_ext)
     ld.add_action(start_vehicle_simulator)
+    ld.add_action(start_terrain_analysis)
+    ld.add_action(start_local_planner)
+    # ld.add_action(start_terrain_analysis_ext)
     # ld.add_action(start_sensor_scan_generation)
     # ld.add_action(start_visualization_tools)
     # ld.add_action(start_joy)

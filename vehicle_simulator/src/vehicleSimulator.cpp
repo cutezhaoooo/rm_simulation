@@ -145,6 +145,15 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
     // 取点云时间戳
     rclcpp::Time timestamp = scanIn->header.stamp;
 
+
+    bool use_sim_time = nh->get_parameter("use_sim_time").as_bool();
+    if (use_sim_time)
+    {
+        RCLCPP_WARN(nh->get_logger(), "⚠ use_sim_time = true, switching to system time!");
+        nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
+    }
+
+
     // ✅ 尝试等待 TF（最多 0.5 秒）
     if (!tfBuffer->canTransform(target_frame, source_frame, rclcpp::Time(0)))
     {
@@ -160,9 +169,25 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
         sensor_msgs::msg::PointCloud2 scanOut;
 
         // ✅ 建议使用 lookupTransform + tf2::doTransform，而不是 pcl_ros::transformPointCloud
-        rclcpp::Time now = nh->get_clock()->now();
+        // rclcpp::Time now = nh->get_clock()->now();
+        // auto t = rclcpp::Clock().now();   
+        // RCLCPP_INFO(nh->get_logger(), "[rclcpp::Clock().now()] sec:%lf nano:%ld", t.seconds(), t.nanoseconds());
+
+        // std::chrono::steady_clock::time_point td = std::chrono::steady_clock::now(); 
+        // std::chrono::steady_clock::duration dtn = td.time_since_epoch();
+        // double secs = dtn.count() * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
+        // RCLCPP_INFO(nh->get_logger(), "[std::chrono::steady_clock::now()] sec:%lf", secs);
+        
+        // auto t2 = nh->get_clock()->now();
+        // RCLCPP_INFO(nh->get_logger(), "[get_clock()->now()] sec:%lf nano:%ld", t2.seconds(), t2.nanoseconds());
+
+        // auto t3 = nh->now();
+        // RCLCPP_INFO(nh->get_logger(), "[this->now()] sec:%lf nano:%ld", t3.seconds(), t3.nanoseconds());
+
+
         geometry_msgs::msg::TransformStamped tfStamped =
-            tfBuffer->lookupTransform(target_frame, source_frame, rclcpp::Time(0));
+            tfBuffer->lookupTransform(target_frame, source_frame, nh->get_clock()->now(), rclcpp::Duration::from_seconds(0.1));
+
 
 
         tf2::doTransform(scanMsg, scanOut, tfStamped);
@@ -184,6 +209,8 @@ int main(int argc, char** argv)
     rclcpp::init(argc,argv);
     nh = rclcpp::Node::make_shared("vehicleSimulator");
 
+    nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
+
     // 初始化 TF Buffer 和 Listener
     tfBuffer = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
     tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
@@ -194,8 +221,7 @@ int main(int argc, char** argv)
 
     auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
 
-    // nh->declare_parameter("use_sim_time", true);
-    nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
+
 
 
     rclcpp::Rate rate(200);

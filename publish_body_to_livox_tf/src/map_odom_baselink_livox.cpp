@@ -16,6 +16,8 @@ public:
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
+        this->set_parameter(rclcpp::Parameter("use_sim_time", false));
+
         // 发布 map->odom 静态变换（恒等）
         geometry_msgs::msg::TransformStamped static_tf;
         static_tf.header.stamp = this->now();
@@ -82,6 +84,7 @@ int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
     rclcpp::spin(std::make_shared<MapOdomBasePublisher>());
+    
     rclcpp::shutdown();
     return 0;
 }

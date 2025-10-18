@@ -38,11 +38,16 @@
 #include "visualization_msgs/msg/marker.hpp"
 #include "visualization_msgs/msg/marker_array.hpp"
 
+#include <fstream>
+#include <errno.h>
+#include <string.h>
+#include <pcl/io/ply_io.h>   
+
 const double PI = 3.1415926;
 
 #define PLOTPATHSET 1
 
-std::string pathFolder;
+std::string pathFolder ;
 
 double vehicleLength = 0.6;
 double vehicleWidth = 0.6;
@@ -170,18 +175,16 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     vehicleX = odom->pose.pose.position.x;
     vehicleY = odom->pose.pose.position.y;
     // 打印 vehicleX 和 vehicleY的值
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
+    RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
     vehicleZ = odom->pose.pose.position.z;
 
 }
 
 void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
 {
-    // RCLCPP_INFO(nh->get_logger(),"laserCloudHandler");
     if (!useTerrainAnalysis)
     {
         // 这个if语句基本不会进入的
-        // RCLCPP_INFO(nh->get_logger(),"laserCloudHandler useTerrainAnalysis");
         // 不走地形分析
         laserCloud->clear();
         // 转成pcl格式
@@ -222,6 +225,7 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
 
 void terrainCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr terrainCloud2)
 {
+    // 地形分析的frame id 是 map
     if (useTerrainAnalysis)
     {
         terrainCloud->clear();
@@ -270,56 +274,78 @@ void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
     goalY = goal->point.y;
 }
 
-int readPlyHeader(FILE *filePtr)
-{
-  char str[50];
-  int val, pointNum;
-  std::string strCur, strLast;
-  while (strCur != "end_header") {
-    val = fscanf(filePtr, "%s", str);
-    if (val != 1) {
-      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-      exit(1);
-    }
+// ---------- safe_read_functions.h / at top of localPlanner.cpp area ----------
+// (No extra includes needed — your file already has <fstream> via iostream; 
+// but ensure to include <fstream> and <pcl/io/ply_io.h> if using PCL load)
+#include <fstream>
+#include <errno.h>
+#include <string.h>
+#include <pcl/io/ply_io.h>   // for pcl::io::loadPLYFile
+// ---------------------------------------------------------------------------
 
+
+// ---------- safe helper: readPlyHeader_safe (fscanf-based but non-fatal) ----------
+static int readPlyHeader_safe(FILE *filePtr, bool &ok)
+{
+  ok = false;
+  if (!filePtr) return 0;
+  char str[128];
+  int val;
+  int pointNum = 0;
+  std::string strCur, strLast;
+  // Ensure we reset file position to start (caller should have opened file)
+  while (strCur != "end_header") {
+    val = fscanf(filePtr, "%127s", str);
+    if (val != 1) {
+      RCLCPP_ERROR(nh->get_logger(), "Error reading PLY header (fscanf).");
+      return 0;
+    }
     strLast = strCur;
     strCur = std::string(str);
-
     if (strCur == "vertex" && strLast == "element") {
       val = fscanf(filePtr, "%d", &pointNum);
       if (val != 1) {
-        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-        exit(1);
+        RCLCPP_ERROR(nh->get_logger(), "Error reading vertex count in PLY header.");
+        return 0;
       }
     }
   }
-
+  ok = true;
   return pointNum;
 }
 
-void readStartPaths()
+
+// ---------- readStartPaths_safe (fscanf-style, non-fatal) ----------
+bool readStartPaths_safe()
 {
   std::string fileName = pathFolder + "/startPaths.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
   if (filePtr == NULL) {
-    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
-    exit(1);
+    RCLCPP_ERROR(nh->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
+    return false;
   }
 
-  int pointNum = readPlyHeader(filePtr);
+  bool header_ok = false;
+  int pointNum = readPlyHeader_safe(filePtr, header_ok);
+  if (!header_ok || pointNum <= 0) {
+    fclose(filePtr);
+    RCLCPP_ERROR(nh->get_logger(), "Invalid PLY header or zero points in %s", fileName.c_str());
+    return false;
+  }
 
   pcl::PointXYZ point;
   int val1, val2, val3, val4, groupID;
-  for (int i = 0; i < pointNum; i++) {
+  for (int i = 0; i < pointNum; ++i) {
     val1 = fscanf(filePtr, "%f", &point.x);
     val2 = fscanf(filePtr, "%f", &point.y);
     val3 = fscanf(filePtr, "%f", &point.z);
     val4 = fscanf(filePtr, "%d", &groupID);
 
     if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1) {
-      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-        exit(1);
+      fclose(filePtr);
+      RCLCPP_ERROR(nh->get_logger(), "Error reading point %d in %s", i, fileName.c_str());
+      return false;
     }
 
     if (groupID >= 0 && groupID < groupNum) {
@@ -328,26 +354,79 @@ void readStartPaths()
   }
 
   fclose(filePtr);
+  RCLCPP_INFO(nh->get_logger(), "Loaded %d start points from %s", pointNum, fileName.c_str());
+  return true;
 }
 
+
+// ---------- readStartPaths_pcl (robust version using pcl::io::loadPLYFile) ----------
+bool readStartPaths_pcl()
+{
+  std::string fileName = pathFolder + "/startPaths.ply";
+  if (access(fileName.c_str(), R_OK) != 0) {
+    RCLCPP_ERROR(nh->get_logger(), "Cannot access %s: %s", fileName.c_str(), strerror(errno));
+    return false;
+  }
+
+  // Try to load into a point cloud with intensity or without depending on file
+  pcl::PointCloud<pcl::PointXYZ> cloud_xyz;
+  int ret = pcl::io::loadPLYFile(fileName, cloud_xyz);
+  if (ret < 0) {
+    RCLCPP_WARN(nh->get_logger(), "pcl::io::loadPLYFile (PointXYZ) failed for %s, trying PointXYZI", fileName.c_str());
+    pcl::PointCloud<pcl::PointXYZI> cloud_xyzi;
+    ret = pcl::io::loadPLYFile(fileName, cloud_xyzi);
+    if (ret < 0) {
+      RCLCPP_ERROR(nh->get_logger(), "pcl::io::loadPLYFile failed for %s", fileName.c_str());
+      return false;
+    } else {
+      // If loaded as PointXYZI: expect each point has x,y,z and an extra field which we'll interpret as groupID if present
+      for (size_t i = 0; i < cloud_xyzi.size(); ++i) {
+        pcl::PointXYZI &p = cloud_xyzi.points[i];
+        // If group ID is stored in intensity (not ideal), you may need to adapt this.
+        // Here we fallback to pushing in default group 0
+        if (groupNum > 0) startPaths[0]->push_back(pcl::PointXYZ(p.x, p.y, p.z));
+      }
+      RCLCPP_INFO(nh->get_logger(), "Loaded %zu points (PointXYZI) from %s", cloud_xyzi.size(), fileName.c_str());
+      return true;
+    }
+  } else {
+    // cloud_xyz loaded fine; but since original format expects a groupID per point appended,
+    // we cannot recover groupID from PointXYZ. We'll push into group 0 as fallback.
+    for (size_t i = 0; i < cloud_xyz.size(); ++i) {
+      const auto &p = cloud_xyz.points[i];
+      if (groupNum > 0) startPaths[0]->push_back(p);
+    }
+    RCLCPP_INFO(nh->get_logger(), "Loaded %zu points (PointXYZ) from %s", cloud_xyz.size(), fileName.c_str());
+    return true;
+  }
+}
+
+
+// ---------- readPaths_safe (if PLOTPATHSET enabled) ----------
 #if PLOTPATHSET == 1
-void readPaths()
+bool readPaths_safe()
 {
   std::string fileName = pathFolder + "/paths.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
   if (filePtr == NULL) {
-    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
-    exit(1);
+    RCLCPP_ERROR(nh->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
+    return false;
   }
 
-  int pointNum = readPlyHeader(filePtr);
+  bool header_ok = false;
+  int pointNum = readPlyHeader_safe(filePtr, header_ok);
+  if (!header_ok || pointNum <= 0) {
+    fclose(filePtr);
+    RCLCPP_ERROR(nh->get_logger(), "Invalid PLY header or zero points in %s", fileName.c_str());
+    return false;
+  }
 
   pcl::PointXYZI point;
   int pointSkipNum = 30;
   int pointSkipCount = 0;
   int val1, val2, val3, val4, val5, pathID;
-  for (int i = 0; i < pointNum; i++) {
+  for (int i = 0; i < pointNum; ++i) {
     val1 = fscanf(filePtr, "%f", &point.x);
     val2 = fscanf(filePtr, "%f", &point.y);
     val3 = fscanf(filePtr, "%f", &point.z);
@@ -355,12 +434,13 @@ void readPaths()
     val5 = fscanf(filePtr, "%f", &point.intensity);
 
     if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
-      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-        exit(1);
+      fclose(filePtr);
+      RCLCPP_ERROR(nh->get_logger(), "Error reading points in %s at index %d", fileName.c_str(), i);
+      return false;
     }
 
     if (pathID >= 0 && pathID < pathNum) {
-      pointSkipCount++;
+      ++pointSkipCount;
       if (pointSkipCount > pointSkipNum) {
         paths[pathID]->push_back(point);
         pointSkipCount = 0;
@@ -369,27 +449,40 @@ void readPaths()
   }
 
   fclose(filePtr);
+  RCLCPP_INFO(nh->get_logger(), "Loaded %d path points from %s", pointNum, fileName.c_str());
+  return true;
 }
 #endif
 
-void readPathList()
+
+// ---------- readPathList_safe ----------
+bool readPathList_safe()
 {
   std::string fileName = pathFolder + "/pathList.ply";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
   if (filePtr == NULL) {
-    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
-    exit(1);
+    RCLCPP_ERROR(nh->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
+    return false;
   }
 
-  if (pathNum != readPlyHeader(filePtr)) {
-    RCLCPP_INFO(nh->get_logger(), "Incorrect path number, exit.");
-    exit(1);
+  bool header_ok = false;
+  int headerCount = readPlyHeader_safe(filePtr, header_ok);
+  if (!header_ok) {
+    fclose(filePtr);
+    RCLCPP_ERROR(nh->get_logger(), "Invalid header in %s", fileName.c_str());
+    return false;
+  }
+
+  if (pathNum != headerCount) {
+    fclose(filePtr);
+    RCLCPP_ERROR(nh->get_logger(), "Path number mismatch in %s: expected %d, got %d", fileName.c_str(), pathNum, headerCount);
+    return false;
   }
 
   int val1, val2, val3, val4, val5, pathID, groupID;
   float endX, endY, endZ;
-  for (int i = 0; i < pathNum; i++) {
+  for (int i = 0; i < pathNum; ++i) {
     val1 = fscanf(filePtr, "%f", &endX);
     val2 = fscanf(filePtr, "%f", &endY);
     val3 = fscanf(filePtr, "%f", &endZ);
@@ -397,42 +490,49 @@ void readPathList()
     val5 = fscanf(filePtr, "%d", &groupID);
 
     if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
-      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-        exit(1);
+      fclose(filePtr);
+      RCLCPP_ERROR(nh->get_logger(), "Error reading path list element %d in %s", i, fileName.c_str());
+      return false;
     }
 
     if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
       pathList[pathID] = groupID;
-      endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180 / PI;
+      endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180.0 / PI;
     }
   }
 
   fclose(filePtr);
+  RCLCPP_INFO(nh->get_logger(), "Loaded path list from %s", fileName.c_str());
+  return true;
 }
 
-void readCorrespondences()
+
+// ---------- readCorrespondences_safe ----------
+bool readCorrespondences_safe()
 {
   std::string fileName = pathFolder + "/correspondences.txt";
 
   FILE *filePtr = fopen(fileName.c_str(), "r");
   if (filePtr == NULL) {
-    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
-    exit(1);
+    RCLCPP_ERROR(nh->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
+    return false;
   }
 
   int val1, gridVoxelID, pathID;
-  for (int i = 0; i < gridVoxelNum; i++) {
+  for (int i = 0; i < gridVoxelNum; ++i) {
     val1 = fscanf(filePtr, "%d", &gridVoxelID);
     if (val1 != 1) {
-      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-        exit(1);
+      fclose(filePtr);
+      RCLCPP_ERROR(nh->get_logger(), "Error reading gridVoxelID in %s at index %d", fileName.c_str(), i);
+      return false;
     }
 
-    while (1) {
+    while (true) {
       val1 = fscanf(filePtr, "%d", &pathID);
       if (val1 != 1) {
-        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
-          exit(1);
+        fclose(filePtr);
+        RCLCPP_ERROR(nh->get_logger(), "Error reading pathID in %s", fileName.c_str());
+        return false;
       }
 
       if (pathID != -1) {
@@ -446,6 +546,8 @@ void readCorrespondences()
   }
 
   fclose(filePtr);
+  RCLCPP_INFO(nh->get_logger(), "Loaded correspondences from %s", fileName.c_str());
+  return true;
 }
 
 
@@ -537,6 +639,7 @@ int main(int argc, char** argv)
     nh->get_parameter("goalX", goalX);
     nh->get_parameter("goalY", goalY);
 
+    pathFolder = "/home/z/rm_simulation/src/local_planner/paths";
 
     // 这里要适配fast lio2 将/odom改为/Odometry
     auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
@@ -595,26 +698,44 @@ int main(int argc, char** argv)
         correspondences[i].resize(0);
     }
 
-    // 读取路径
-    readStartPaths();
-    // RCLCPP_INFO(nh->get_logger(),"readStartPaths");
+    RCLCPP_INFO(nh->get_logger(), "pathFolder = %s", pathFolder.c_str());
+
+    // --- load files safely ---
+    if (!readStartPaths_safe()) {
+        RCLCPP_ERROR(nh->get_logger(), "readStartPaths_safe failed. Shutting down.");
+        rclcpp::shutdown();
+        return 1;
+    }
+
     #if PLOTPATHSET == 1
-    readPaths();
-    // RCLCPP_INFO(nh->get_logger(),"readPaths");
+    if (!readPaths_safe()) {
+        RCLCPP_ERROR(nh->get_logger(), "readPaths_safe failed. Shutting down.");
+        rclcpp::shutdown();
+        return 1;
+    }
     #endif
-    readPathList();
-    // RCLCPP_INFO(nh->get_logger(),"readPathList");
-    readCorrespondences();
-    // RCLCPP_INFO(nh->get_logger(),"readCorrespondences");
+
+    if (!readPathList_safe()) {
+        RCLCPP_ERROR(nh->get_logger(), "readPathList_safe failed. Shutting down.");
+        rclcpp::shutdown();
+        return 1;
+    }
+
+    if (!readCorrespondences_safe()) {
+        RCLCPP_ERROR(nh->get_logger(), "readCorrespondences_safe failed. Shutting down.");
+        rclcpp::shutdown();
+        return 1;
+    }
     
     rclcpp::Rate rate(100);
     bool status = rclcpp::ok();
     // TAG设置点云发布的频率
     // rclcpp::Rate rate(50);
-    while (status)
+    // while (status)
+    rclcpp::spin_some(nh);
+    while (false)
     {
         // RCLCPP_INFO(nh->get_logger(),"while ok");
-        rclcpp::spin_some(nh);
         // rclcpp::spin(nh);
         
         
@@ -1256,7 +1377,7 @@ int main(int argc, char** argv)
         rate.sleep();
     }
     
-    // rclcpp::shutdown();
+    rclcpp::shutdown();
     return 0;
 }
 
