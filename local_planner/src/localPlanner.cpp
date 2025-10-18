@@ -43,6 +43,9 @@
 #include <string.h>
 #include <pcl/io/ply_io.h>   
 
+#include <chrono>
+using namespace std::chrono_literals;
+
 const double PI = 3.1415926;
 
 #define PLOTPATHSET 1
@@ -59,6 +62,8 @@ public:
         initializeFilters();
         initializePointClouds();
         loadPathFiles();
+
+        
         
         RCLCPP_INFO(this->get_logger(), "LocalPlanner initialized successfully.");
     }
@@ -267,6 +272,7 @@ private:
         this->get_parameter("goalY", goalY_);
 
         // Set default path folder
+        // TODO 这里需要修
         if (pathFolder_.empty()) {
             pathFolder_ = "/home/z/rm_simulation/src/local_planner/paths";
         }
@@ -349,6 +355,7 @@ private:
     // Callback functions
     void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     {
+        // 这里的vehicle是odom坐标系下面的 需要转换到map坐标系下面
         odomTime_ = rclcpp::Time(odom->header.stamp).seconds();
         double roll, pitch, yaw;
         geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
@@ -361,7 +368,37 @@ private:
         vehicleY_ = odom->pose.pose.position.y;
         vehicleZ_ = odom->pose.pose.position.z;
 
-        RCLCPP_DEBUG(this->get_logger(), "vehicleX: %f, vehicleY: %f", vehicleX_, vehicleY_);
+        // RCLCPP_DEBUG(this->get_logger(), "vehicleX: %f, vehicleY: %f", vehicleX_, vehicleY_);
+
+        // 转换到map坐标系下面
+        try
+        {
+            geometry_msgs::msg::TransformStamped map_to_odom = tf_buffer_.lookupTransform("map","odom",odom->header.stamp,100ms);
+
+            // 构造odom下面的pose
+            geometry_msgs::msg::PoseStamped odom_pose,map_pose;
+            odom_pose.header = odom->header;
+            odom_pose.pose = odom->pose.pose;
+
+            // 执行坐标变换
+            tf2::doTransform(odom_pose,map_pose,map_to_odom);
+
+            vehicleX_ = map_pose.pose.position.x;
+            vehicleY_ = map_pose.pose.position.y;
+            vehicleZ_ = map_pose.pose.position.z;
+
+            
+            
+          }
+          catch (const tf2::TransformException &ex) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
+            "TF transform (map->odom) failed: %s", ex.what());
+          }
+          
+          RCLCPP_INFO(this->get_logger(),
+                   "Transformed to map frame: X=%.3f, Y=%.3f, Z=%.3f",
+                   vehicleX_, vehicleY_, vehicleZ_);
+
     }
 
     void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
