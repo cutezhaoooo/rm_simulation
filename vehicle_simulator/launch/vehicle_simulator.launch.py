@@ -97,7 +97,7 @@ def generate_launch_description():
         'smoothRateIncl': smoothRateIncl,
         'InclFittingThre': InclFittingThre,
         'maxIncl': maxIncl,
-        'use_sim_time': use_sim_time
+        'use_sim_time': False
       }
       ],
       output='screen'
