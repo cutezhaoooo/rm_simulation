@@ -170,7 +170,7 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
     vehicleX = odom->pose.pose.position.x;
     vehicleY = odom->pose.pose.position.y;
     // 打印 vehicleX 和 vehicleY的值
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
+    RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
     vehicleZ = odom->pose.pose.position.z;
 
 }

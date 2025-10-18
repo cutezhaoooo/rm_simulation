@@ -33,8 +33,8 @@ def generate_launch_description():
     # 还需要启动一个 tf 
     start_tf = Node(
         package='publish_body_to_livox_tf',
-        executable='publish_body_to_livox',
-        name='publish_body_to_livox'
+        executable='map_odom_baselink_livox',
+        name='map_odom_baselink_livox'
     )
 
 

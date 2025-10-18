@@ -58,6 +58,7 @@ install(
   DIRECTORY
   launch
   paths
+  param
   DESTINATION share/${PROJECT_NAME}
 )
 

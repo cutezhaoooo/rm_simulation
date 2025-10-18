@@ -1,0 +1,68 @@
+localPlanner:
+  ros__parameters:
+    # 路径相关
+    pathFolder: "$(find-pkg-share local_planner)/paths"
+
+    # 车辆尺寸
+    vehicleLength: 0.6
+    vehicleWidth: 0.6
+
+    # 传感器偏移
+    sensorOffsetX: 0.0
+    sensorOffsetY: 0.0
+
+    # 驱动模式
+    twoWayDrive: true
+
+    # 点云处理
+    laserVoxelSize: 0.05
+    terrainVoxelSize: 0.2
+
+    # 地形分析与障碍物检测
+    useTerrainAnalysis: true
+    checkObstacle: true
+    checkRotObstacle: false
+    adjacentRange: 4.25
+    obstacleHeightThre: 0.15
+    groundHeightThre: 0.1
+    costHeightThre: 0.1
+    costScore: 0.02
+    useCost: false
+
+    # 路径点阈值
+    pointPerPathThre: 2
+
+    # 高度过滤
+    minRelZ: -0.5
+    maxRelZ: 0.25
+
+    # 速度控制
+    maxSpeed: 2.0
+    autonomyMode: true
+    autonomySpeed: 2.0
+    joyToSpeedDelay: 2.0
+    joyToCheckObstacleDelay: 5.0
+
+    # 方向权重
+    dirWeight: 0.02
+    dirThre: 90.0
+    dirToVehicle: false
+
+    # 路径缩放
+    pathScale: 1.25
+    minPathScale: 0.75
+    pathScaleStep: 0.25
+    pathScaleBySpeed: true
+
+    # 路径范围
+    minPathRange: 1.0
+    pathRangeStep: 0.5
+    pathRangeBySpeed: true
+
+    # 其他逻辑
+    pathCropByGoal: true
+    goalClearRange: 0.5
+
+    # 目标点（可运行时更新）
+    goalX: 0.0
+    goalY: 0.0
