@@ -43,6 +43,7 @@ def generate_launch_description():
         executable='localPlanner',
         name='localPlanner',
         output='screen',
+        # prefix='xterm -e gdb --args',  # 关键：用 gdb 启动
         parameters=[{
             'pathFolder': path_folder,
             'vehicleLength': 0.6,

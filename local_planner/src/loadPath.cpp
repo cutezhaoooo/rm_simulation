@@ -63,7 +63,7 @@ public:
         initializePointClouds();
         loadPathFiles();
 
-        if (terrainInit)
+        if(terrainInit)
         {
             // 将原来的 while 循环改成定时器
             timer = this->create_wall_timer(
@@ -72,13 +72,15 @@ public:
             );
             
             RCLCPP_INFO(this->get_logger(), "LocalPlanner initialized successfully.");
+
         }
-        
+
     }
 
 private:
 
     bool terrainInit = false;
+
     rclcpp::TimerBase::SharedPtr timer;
 
     // Parameters
@@ -168,6 +170,8 @@ private:
     pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud;
     pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudBody;
     std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> startPaths;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum];
+
 #if PLOTPATHSET == 1
     std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> paths;
     pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths;
@@ -191,8 +195,6 @@ private:
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubObstacleCloud;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pubMarker;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr path_cost_pub_;
-
 #if PLOTPATHSET == 1
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubFreePaths;
 #endif
@@ -310,15 +312,12 @@ private:
         subBoundary = this->create_subscription<geometry_msgs::msg::PolygonStamped>(
             "/navigation_boundary", 5, std::bind(&LocalPlanner::boundaryHandle, this, std::placeholders::_1));
 
-
         // Publishers
         pubLaserCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud", 5);
         pubLaserCloud2 = this->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner", 5);
         pubObstacleCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud", 5);
         pubMarker = this->create_publisher<visualization_msgs::msg::MarkerArray>("/path_debug", 10);
         pubPath = this->create_publisher<nav_msgs::msg::Path>("/local_path", 5);
-        path_cost_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("path_cost_viz", 10);
-
         
 #if PLOTPATHSET == 1
         pubFreePaths = this->create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths", 2);
@@ -463,7 +462,6 @@ private:
             RCLCPP_INFO(this->get_logger(), "Received empty PointCloud2 message (no data).");
             return;
         }
-        
 
         if (useTerrainAnalysis) {
             terrainCloud->clear();
@@ -556,6 +554,7 @@ private:
 
         pcl::PointXYZ point;
         int val1, val2, val3, val4, groupID;
+        // 为每个组创建点云容器 
         for (int i = 0; i < pointNum; ++i) {
             val1 = fscanf(filePtr, "%f", &point.x);
             val2 = fscanf(filePtr, "%f", &point.y);
@@ -568,7 +567,9 @@ private:
                 return false;
             }
 
+            // 将点分配到对应组
             if (groupID >= 0 && groupID < groupNum) {
+                // 记录每个 groupID的起点
                 startPaths[groupID]->push_back(point);
             }
         }
@@ -581,6 +582,7 @@ private:
 #if PLOTPATHSET == 1
     bool readPaths_safe()
     {
+        // 路径集合
         std::string fileName = pathFolder + "/paths.ply";
         FILE *filePtr = fopen(fileName.c_str(), "r");
         if (filePtr == NULL) {
@@ -630,6 +632,7 @@ private:
 
     bool readPathList_safe()
     {
+        // 每个路径的最后一个路径点  和 startPaths 中的格式相同
         std::string fileName = pathFolder + "/pathList.ply";
         FILE *filePtr = fopen(fileName.c_str(), "r");
         if (filePtr == NULL) {
@@ -669,6 +672,7 @@ private:
 
             if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
                 pathList[pathID] = groupID;
+                // 每条路径的终点信息
                 endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180.0 / PI;
             }
         }
@@ -844,319 +848,8 @@ private:
 
     void processData()
     {
-        if (newlaserCloud || newTerrainCloud)
-        {
-            if (newlaserCloud)
-            {
-                /* code */
-            }
 
-            if (newTerrainCloud)
-            {
-                newTerrainCloud = false;
-
-                plannerCloud->clear();
-
-                *plannerCloud = *terrainCloudDwz;
-            }
-            
-        }
-
-        // 将 plannerCloud pub出来
-        sensor_msgs::msg::PointCloud2 ros_pc2;
-        pcl::toROSMsg(*plannerCloud,ros_pc2);
-        ros_pc2.header.frame_id = "map";
-        ros_pc2.header.stamp = this->now();
-        pubLaserCloud->publish(ros_pc2);
-        
-        pcl::PointXYZI point;
-        plannerCloudCrop->clear();
-
-        // 
-        int plannerCloudSize = plannerCloud->points.size();
-        for (int i = 0; i < plannerCloudSize; i++)
-        {
-            // 现在point cloud在map坐标系下面
-            // vehicle也在map坐标系下面
-            float pointX1 = plannerCloud->points[i].x - vehicleX;
-            float pointY1 = plannerCloud->points[i].y - vehicleY;
-            float pointZ1 = plannerCloud->points[i].z - vehicleZ;
-
-            point.x = pointX1;
-            point.y = pointY1;
-            point.z = pointZ1;
-            point.intensity = plannerCloud->points[i].intensity;
-
-            float dis = sqrt(point.x * point.x + point.y * point.y);
-            // RCLCPP_INFO(this->get_logger(),"dis : %.2f",dis);
-            if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
-                plannerCloudCrop->push_back(point);
-            }
-        }
-
-        // pub出来看看
-        sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-        pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
-        plannerCloudMsg.header.stamp = this->get_clock()->now();
-        // HACKplannerCloudCrop的坐标系是 base_link 或者 livox_frame ??
-        plannerCloudMsg.header.frame_id = "base_link";
-        pubLaserCloud2->publish(plannerCloudMsg);
-        
-
-        float pathRange = adjacentRange;
-        // RCLCPP_INFO(this->get_logger(),"pathRange : %.2f",pathRange);
-        if (pathRange < minPathRange) 
-        {
-            pathRange = minPathRange;
-        }
-
-        float relativeGoalDis = adjacentRange;
-        
-        if (autonomyMode)
-        {
-            // NOTE:要考虑车辆的相对位置 !!!!!!!
-            float relativeGoalX = goalX - vehicleX;
-            float relativeGoalY = goalY - vehicleY;
-
-            // 计算绝对角度（相对于地图坐标系）
-            float absoluteGoalDir = atan2(relativeGoalY, relativeGoalX) * 180 / PI;
-
-            // 减去车辆航向角，得到相对于车辆前方的角度
-            joyDir = absoluteGoalDir - vehicleYaw * 180 / PI;
-
-            // 规范化到 [-180, 180] 范围
-            while (joyDir > 180) joyDir -= 360;
-            while (joyDir < -180) joyDir += 360;
-
-            relativeGoalDis = sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
-
-            // RCLCPP_INFO(this->get_logger(), "绝对角度: %.2f°, 车辆航向: %.2f°, 相对角度: %.2f°, 距离: %.2f", 
-            //     absoluteGoalDir, vehicleYaw * 180 / PI, joyDir, relativeGoalDis);
-            if (!twoWayDrive) 
-            {
-                if (joyDir > 90.0) 
-                {
-                    joyDir = 90.0;
-                }
-                else if (joyDir < -90.0) 
-                {
-                    joyDir = -90.0;
-                }
-            }
-        }
-
-        // ===========================================================================
-        //                              TAG开始设置路径
-        bool pathFind = false;
-        float defPathScale = pathScale;
-        // 没有理会这里是什么意思
-        if (pathScaleBySpeed)
-        {
-            pathScale = defPathScale * joySpeed;
-        }
-        if (pathScale < minPathScale)
-        {
-            pathScale = minPathScale;
-        }
-        while (pathScale >= minPathScale && pathRange >= minPathRange) 
-        {
-            // 清空之前的评分器
-            for (int i = 0; i < 36 * pathNum; i++) 
-            {
-                clearPathList[i] = 0;
-                pathPenaltyList[i] = 0;
-            }
-
-            // 每个方向都有gropNum个路径组 每个路径组对应一组不同形状的轨迹
-            for (int i = 0; i < 36 * groupNum; i++)
-            {
-                clearPathPerGroupScore[i] = 0;
-            }
-
-            float minObsAngCW = -180.0;
-            float minObsAngCCW = 180.0;
-            float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
-            float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
-
-            pcl::PointCloud<pcl::PointXYZI>::Ptr obstacleVisCloud(new pcl::PointCloud<pcl::PointXYZI>());
-
-
-            // plannerCloudCrop是map坐标系下面的
-
-            // 但是计算的距离是到车辆的 所以需要将点云转换到base link坐标系下面
-            pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudBase(new pcl::PointCloud<pcl::PointXYZI>());
-            
-            try {
-                // 获取 map -> base_link 的变换
-                geometry_msgs::msg::TransformStamped tf_map_to_base;
-                // plannerCloudCrop来源于plannerCloud
-                tf_map_to_base = tfBuffer.lookupTransform(
-                    "base_link", "map",
-                    rclcpp::Time(plannerCloud->header.stamp),
-                    rclcpp::Duration::from_seconds(0.1)
-                );
-
-
-                // 将 TF 转换为 Eigen::Isometry3d
-                Eigen::Isometry3d eigen_tf = tf2::transformToEigen(tf_map_to_base.transform);
-
-                // 使用 PCL 的变换函数进行坐标转换
-                pcl::transformPointCloud(*plannerCloudCrop, *plannerCloudBase, eigen_tf.matrix());
-
-                // RCLCPP_INFO(this->get_logger(), "Transformed %zu points from map to base_link frame",
-                //             plannerCloudCrop->points.size());
-
-            } catch (tf2::TransformException &ex) {
-                RCLCPP_WARN(this->get_logger(), "TF transform failed: %s", ex.what());
-                return;
-            }
-
-            int plannerCloudBaseSize = plannerCloudBase->points.size();
-            for (int i = 0; i < plannerCloudBaseSize; i++)
-            {
-                // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
-
-                
-                float x = plannerCloudBase->points[i].x / pathScale;
-                float y = plannerCloudBase->points[i].y / pathScale;
-                float h = plannerCloudBase->points[i].intensity;
-
-                // 这里的dis需要计算的是点云到车辆的距离
-                float dis = std::sqrt(x*x + y*y);
-
-                RCLCPP_INFO(this->get_logger(),"dis :%.2f",dis);
-                if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
-                {
-
-
-                    // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
-                    for (int rotDir = 0; rotDir < 36; rotDir++)
-                    {
-                        // 每个旋转方向 当前位置转路径点的角度 转成了弧度
-                        float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-                        // 当前候选路径方向（rotDir）与目标方向（joyDir）之间的角度差
-                        float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
-
-                        if (angDiff > 180.0) 
-                        {
-                            angDiff = 360.0 - angDiff;
-                        }
-                        // 如果角度差太大
-                        if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-                            ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) 
-                        {
-                            continue;
-                        }
-
-                        // 将点旋转rotAng度 现在 x2 和 y2都是在base link的坐标系下面旋转的
-
-                        float x2 = cos(rotAng) * x + sin(rotAng) * y;
-                        float y2 = -sin(rotAng) * x + cos(rotAng) * y;
-
-                        // 对y方向进行缩放 ?
-                        float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
-                             * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
-
-                        // 计算网格索引
-                        int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
-                        int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
-                        // 重点关注如何计算的 
-                        if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) 
-                        {
-                            int ind = gridVoxelNumY * indX + indY;
-                            int blockedPathByVoxelNum = correspondences[ind].size();
-                            for (int j = 0; j < blockedPathByVoxelNum; j++) 
-                            {
-                                // 如果是高障碍 增加clearPathList计数
-                                if (h > obstacleHeightThre || !useTerrainAnalysis) 
-                                {
-                                    clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
-                                } 
-                                else 
-                                {
-                                    // 其余情况不算阻挡但是增加路径的惩罚
-                                    if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) 
-                                    {
-                                        pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
-                                    }
-                                }
-                            }
-
-                        }
-
-                    }
-
-                    
-                    
-                }
-                
-                visualization_msgs::msg::MarkerArray marker_array;
-                marker_array.markers.reserve(36);
-
-                for (int rotDir = 0; rotDir < 36; rotDir++) {
-                    visualization_msgs::msg::Marker marker;
-                    marker.header.frame_id = "base_link";  // 可视化以车辆为中心
-                    marker.header.stamp = this->now();
-                    marker.ns = "path_cost";
-                    marker.id = rotDir;
-                    marker.type = visualization_msgs::msg::Marker::ARROW;
-                    marker.action = visualization_msgs::msg::Marker::ADD;
-
-                    // 箭头起点：车辆中心
-                    geometry_msgs::msg::Point p_start;
-                    p_start.x = 0.0;
-                    p_start.y = 0.0;
-                    p_start.z = 0.0;
-
-                    // 箭头终点：根据路径角度
-                    geometry_msgs::msg::Point p_end;
-                    float rotAng = (10.0 * rotDir - 180.0) * M_PI / 180.0;
-                    float base_length = 3.0;  // 基础长度
-                    float cost_scale = 1.0;   // 可调节
-
-                    // 取代价或清晰度作为可视化参数
-                    float cost_value = 0.0;
-                    for (int j = 0; j < pathNum; j++) {
-                        cost_value += pathPenaltyList[pathNum * rotDir + j];
-                    }
-
-                    // 根据代价决定箭头长度（或颜色）
-                    float length = base_length * (1.0 - std::min(cost_value * cost_scale, 0.9f)); // 高代价更短
-
-                    p_end.x = length * cos(rotAng);
-                    p_end.y = length * sin(rotAng);
-                    p_end.z = 0.0;
-
-                    marker.points.push_back(p_start);
-                    marker.points.push_back(p_end);
-
-                    // 颜色：绿色代表通畅，红色代表高代价
-                    std_msgs::msg::ColorRGBA color;
-                    float norm_cost = std::min(cost_value / 2.0f, 1.0f); // 归一化
-                    color.r = norm_cost;
-                    color.g = 1.0 - norm_cost;
-                    color.b = 0.0;
-                    color.a = 1.0;
-                    marker.color = color;
-
-                    marker.scale.x = 0.05;  // 箭头杆粗细
-                    marker.scale.y = 0.1;   // 箭头头部大小
-                    marker.scale.z = 0.1;
-
-                    marker_array.markers.push_back(marker);
-                }
-
-                // 发布
-                path_cost_pub_->publish(marker_array);
-            }
-
-            // 可视化角度差
-            // visualizeDirectionDifferences(joyDir, pathRange);
-            
-        }
-        
     }
-
 };
 
 // Static member initialization
