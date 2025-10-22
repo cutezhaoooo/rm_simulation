@@ -19,1154 +19,971 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/polygon_stamped.hpp>
-#include <sensor_msgs/msg/imu.hpp>
+#include <sensor_msgs/msg/imu.h>
 
 #include "tf2/transform_datatypes.h"
 #include "tf2_ros/transform_broadcaster.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#include "tf2_ros/buffer.h"
-#include "tf2_eigen/tf2_eigen.hpp"
-#include "tf2_ros/transform_listener.h"
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/common/transforms.h>
 
-#include "visualization_msgs/msg/marker.hpp"
-#include "visualization_msgs/msg/marker_array.hpp"
+#include "message_filters/subscriber.h"
+#include "message_filters/synchronizer.h"
+#include "message_filters/sync_policies/approximate_time.h"
+#include "rmw/types.h"
+#include "rmw/qos_profiles.h"
 
-#include <fstream>
-#include <errno.h>
-#include <string.h>
-#include <pcl/io/ply_io.h>   
-
-#include <chrono>
-using namespace std::chrono_literals;
+using namespace std;
 
 const double PI = 3.1415926;
 
 #define PLOTPATHSET 1
 
-class LocalPlanner : public rclcpp::Node
+string pathFolder;
+double vehicleLength = 0.6;
+double vehicleWidth = 0.6;
+double sensorOffsetX = 0;
+double sensorOffsetY = 0;
+bool twoWayDrive = true;
+double laserVoxelSize = 0.05;
+double terrainVoxelSize = 0.2;
+bool useTerrainAnalysis = false;
+bool checkObstacle = true;
+bool checkRotObstacle = false;
+double adjacentRange = 3.5;
+double obstacleHeightThre = 0.2;
+double groundHeightThre = 0.1;
+double costHeightThre = 0.1;
+double costScore = 0.02;
+bool useCost = false;
+const int laserCloudStackNum = 1;
+int laserCloudCount = 0;
+int pointPerPathThre = 2;
+double minRelZ = -0.5;
+double maxRelZ = 0.25;
+double maxSpeed = 1.0;
+double dirWeight = 0.02;
+double dirThre = 90.0;
+bool dirToVehicle = false;
+double pathScale = 1.0;
+double minPathScale = 0.75;
+double pathScaleStep = 0.25;
+bool pathScaleBySpeed = true;
+double minPathRange = 1.0;
+double pathRangeStep = 0.5;
+bool pathRangeBySpeed = true;
+bool pathCropByGoal = true;
+bool autonomyMode = false;
+double autonomySpeed = 1.0;
+double joyToSpeedDelay = 2.0;
+double joyToCheckObstacleDelay = 5.0;
+double goalClearRange = 0.5;
+double goalX = 0;
+double goalY = 0;
+
+float joySpeed = 0;
+float joySpeedRaw = 0;
+float joyDir = 0;
+
+const int pathNum = 343;
+const int groupNum = 7;
+float gridVoxelSize = 0.02;
+float searchRadius = 0.45;
+float gridVoxelOffsetX = 3.2;
+float gridVoxelOffsetY = 4.5;
+const int gridVoxelNumX = 161;
+const int gridVoxelNumY = 451;
+const int gridVoxelNum = gridVoxelNumX * gridVoxelNumY;
+
+pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudStack[laserCloudStackNum];
+pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr addedObstacles(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZ>::Ptr startPaths[groupNum];
+#if PLOTPATHSET == 1
+pcl::PointCloud<pcl::PointXYZI>::Ptr paths[pathNum];
+pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths(new pcl::PointCloud<pcl::PointXYZI>());
+#endif
+
+int pathList[pathNum] = {0};
+float endDirPathList[pathNum] = {0};
+int clearPathList[36 * pathNum] = {0};
+float pathPenaltyList[36 * pathNum] = {0};
+float clearPathPerGroupScore[36 * groupNum] = {0};
+std::vector<int> correspondences[gridVoxelNum];
+
+bool newLaserCloud = false;
+bool newTerrainCloud = false;
+
+double odomTime = 0;
+double joyTime = 0;
+
+float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0;
+float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
+
+pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter;
+rclcpp::Node::SharedPtr nh;
+
+void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 {
-public:
-    LocalPlanner() : Node("localPlanner"), 
-                    tfBuffer(this->get_clock()),
-                    tfListener(tfBuffer)
-    {
-        initializeParameters();
-        setupPublishersAndSubscribers();
-        initializeFilters();
-        initializePointClouds();
-        loadPathFiles();
+  odomTime = rclcpp::Time(odom->header.stamp).seconds();
+  double roll, pitch, yaw;
+  geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
+  tf2::Matrix3x3(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w)).getRPY(roll, pitch, yaw);
 
-        if (terrainInit)
-        {
-            // 将原来的 while 循环改成定时器
-            timer = this->create_wall_timer(
-                std::chrono::milliseconds(50),  // 20hz
-                std::bind(&LocalPlanner::processData,this)
-            );
-            
-            RCLCPP_INFO(this->get_logger(), "LocalPlanner initialized successfully.");
-        }
-        
+  vehicleRoll = roll;
+  vehiclePitch = pitch;
+  vehicleYaw = yaw;
+  vehicleX = odom->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
+  vehicleY = odom->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
+  vehicleZ = odom->pose.pose.position.z;
+}
+
+void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
+{
+  if (!useTerrainAnalysis) {
+    laserCloud->clear();
+    pcl::fromROSMsg(*laserCloud2, *laserCloud);
+
+    pcl::PointXYZI point;
+    laserCloudCrop->clear();
+    int laserCloudSize = laserCloud->points.size();
+    for (int i = 0; i < laserCloudSize; i++) {
+      point = laserCloud->points[i];
+
+      float pointX = point.x;
+      float pointY = point.y;
+      float pointZ = point.z;
+
+      float dis = sqrt((pointX - vehicleX) * (pointX - vehicleX) + (pointY - vehicleY) * (pointY - vehicleY));
+      if (dis < adjacentRange) {
+        point.x = pointX;
+        point.y = pointY;
+        point.z = pointZ;
+        laserCloudCrop->push_back(point);
+      }
     }
 
-private:
+    laserCloudDwz->clear();
+    laserDwzFilter.setInputCloud(laserCloudCrop);
+    laserDwzFilter.filter(*laserCloudDwz);
 
-    bool terrainInit = false;
-    rclcpp::TimerBase::SharedPtr timer;
+    newLaserCloud = true;
+  }
+}
 
-    // Parameters
-    std::string pathFolder;
-    double vehicleLength;
-    double vehicleWidth;
-    double sensorOffsetX;
-    double sensorOffsetY;
-    bool twoWayDrive;
-    double laserVoxelSize;
-    double terrainVoxelSize;
-    bool useTerrainAnalysis;
-    bool checkObstacle;
-    bool checkRotObstacle;
-    double adjacentRange;
-    double obstacleHeightThre;
-    double groundHeightThre;
-    double costHeightThre;
-    double costScore;
-    bool useCost;
-    const int laserCloudStackNum = 1;
-    int laserCloudCount;
-    int pointPerPathThre;
-    double minRelZ;
-    double maxRelZ;
-    double maxSpeed;
-    double dirWeight;
-    double dirThre;
-    bool dirToVehicle;
-    double pathScale;
-    double minPathScale;
-    double pathScaleStep;
-    bool pathScaleBySpeed;
-    double minPathRange;
-    double pathRangeStep;
-    bool pathRangeBySpeed;
-    bool pathCropByGoal;
-    bool autonomyMode;
-    double autonomySpeed;
-    double joyToSpeedDelay;
-    double joyToCheckObstacleDelay;
-    double goalClearRange;
-    double goalX;
-    double goalY;
+void terrainCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr terrainCloud2)
+{
+  if (useTerrainAnalysis) {
+    terrainCloud->clear();
+    pcl::fromROSMsg(*terrainCloud2, *terrainCloud);
 
-    // State variables
-    float joySpeed;
-    float joySpeedRaw;
-    float joyDir;
-    bool newlaserCloud = false;
-    bool newTerrainCloud = false;
-    double odomTime = 0;
-    double joyTime = 0;
-    float vehicleRoll = 0, vehiclePitch = 0, vehicleYaw = 0;
-    float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
+    pcl::PointXYZI point;
+    terrainCloudCrop->clear();
+    int terrainCloudSize = terrainCloud->points.size();
+    for (int i = 0; i < terrainCloudSize; i++) {
+      point = terrainCloud->points[i];
 
-    // Constants
-    const int pathNum = 343;
-    const int groupNum = 7;
-    float gridVoxelSize = 0.02;
-    float searchRadius = 0.45;
-    float gridVoxelOffsetX = 3.2;
-    float gridVoxelOffsetY = 4.5;
-    const int gridVoxelNumX = 161;
-    const int gridVoxelNumY = 451;
-    const int gridVoxelNum = gridVoxelNumX * gridVoxelNumY;
+      float pointX = point.x;
+      float pointY = point.y;
+      float pointZ = point.z;
 
-    // Arrays and vectors
-    int pathList[343] = {0};
-    float endDirPathList[343] = {0};
-    int clearPathList[36 * 343] = {0};
-    float pathPenaltyList[36 * 343] = {0};
-    float clearPathPerGroupScore[36 * 7] = {0};
-    std::vector<int> correspondences[72611]; // 161*451 = 72611
-
-    // Point clouds
-    pcl::VoxelGrid<pcl::PointXYZI> laserDwzFilter, terrainDwzFilter;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudCrop;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloudDWZ;
-    std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> laserCloudStack;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloud;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudCrop;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudCrop;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr boundaryCloud;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudBody;
-    std::vector<pcl::PointCloud<pcl::PointXYZ>::Ptr> startPaths;
-#if PLOTPATHSET == 1
-    std::vector<pcl::PointCloud<pcl::PointXYZI>::Ptr> paths;
-    pcl::PointCloud<pcl::PointXYZI>::Ptr freePaths;
-#endif
-
-    // Selection variables
-    static int lastSelectedGroupID;
-    float maxScore = 0;
-    int selectedGroupID = -1;
-    float scoreThreshold = maxScore * 0.9;
-
-    // ROS components
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdometry;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLaserCloud;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subTerrainCloud;
-    rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr subGoal;
-    rclcpp::Subscription<geometry_msgs::msg::PolygonStamped>::SharedPtr subBoundary;
-
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloud2;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubObstacleCloud;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr pubMarker;
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pubPath;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr path_cost_pub_;
-
-#if PLOTPATHSET == 1
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubFreePaths;
-#endif
-
-    // TF2 components - must be initialized in member initializer list
-    tf2_ros::Buffer tfBuffer;
-    tf2_ros::TransformListener tfListener;
-
-    void initializeParameters()
-    {
-        // Declare parameters
-        this->declare_parameter<std::string>("pathFolder", "");
-        this->declare_parameter<double>("vehicleLength", 0.6);
-        this->declare_parameter<double>("vehicleWidth", 0.6);
-        this->declare_parameter<double>("sensorOffsetX", 0.0);
-        this->declare_parameter<double>("sensorOffsetY", 0.0);
-        this->declare_parameter<bool>("twoWayDrive", true);
-        this->declare_parameter<double>("laserVoxelSize", 0.05);
-        this->declare_parameter<double>("terrainVoxelSize", 0.2);
-        this->declare_parameter<bool>("useTerrainAnalysis", false);
-        this->declare_parameter<bool>("checkObstacle", true);
-        this->declare_parameter<bool>("checkRotObstacle", false);
-        this->declare_parameter<double>("adjacentRange", 3.5);
-        this->declare_parameter<double>("obstacleHeightThre", 0.2);
-        this->declare_parameter<double>("groundHeightThre", 0.1);
-        this->declare_parameter<double>("costHeightThre", 0.1);
-        this->declare_parameter<double>("costScore", 0.02);
-        this->declare_parameter<bool>("useCost", false);
-        this->declare_parameter<int>("pointPerPathThre", 2);
-        this->declare_parameter<double>("minRelZ", -0.5);
-        this->declare_parameter<double>("maxRelZ", 0.25);
-        this->declare_parameter<double>("maxSpeed", 1.0);
-        this->declare_parameter<double>("dirWeight", 0.02);
-        this->declare_parameter<double>("dirThre", 90.0);
-        this->declare_parameter<bool>("dirToVehicle", false);
-        this->declare_parameter<double>("pathScale", 1.0);
-        this->declare_parameter<double>("minPathScale", 0.75);
-        this->declare_parameter<double>("pathScaleStep", 0.25);
-        this->declare_parameter<bool>("pathScaleBySpeed", true);
-        this->declare_parameter<double>("minPathRange", 1.0);
-        this->declare_parameter<double>("pathRangeStep", 0.5);
-        this->declare_parameter<bool>("pathRangeBySpeed", true);
-        this->declare_parameter<bool>("pathCropByGoal", true);
-        this->declare_parameter<bool>("autonomyMode", false);
-        this->declare_parameter<double>("autonomySpeed", 1.0);
-        this->declare_parameter<double>("joyToSpeedDelay", 2.0);
-        this->declare_parameter<double>("joyToCheckObstacleDelay", 5.0);
-        this->declare_parameter<double>("goalClearRange", 0.5);
-        this->declare_parameter<double>("goalX", 0.0);
-        this->declare_parameter<double>("goalY", 0.0);
-
-        // Get parameters
-        this->get_parameter("pathFolder", pathFolder);
-        this->get_parameter("vehicleLength", vehicleLength);
-        this->get_parameter("vehicleWidth", vehicleWidth);
-        this->get_parameter("sensorOffsetX", sensorOffsetX);
-        this->get_parameter("sensorOffsetY", sensorOffsetY);
-        this->get_parameter("twoWayDrive", twoWayDrive);
-        this->get_parameter("laserVoxelSize", laserVoxelSize);
-        this->get_parameter("terrainVoxelSize", terrainVoxelSize);
-        this->get_parameter("useTerrainAnalysis", useTerrainAnalysis);
-        this->get_parameter("checkObstacle", checkObstacle);
-        this->get_parameter("checkRotObstacle", checkRotObstacle);
-        this->get_parameter("adjacentRange", adjacentRange);
-        this->get_parameter("obstacleHeightThre", obstacleHeightThre);
-        this->get_parameter("groundHeightThre", groundHeightThre);
-        this->get_parameter("costHeightThre", costHeightThre);
-        this->get_parameter("costScore", costScore);
-        this->get_parameter("useCost", useCost);
-        this->get_parameter("pointPerPathThre", pointPerPathThre);
-        this->get_parameter("minRelZ", minRelZ);
-        this->get_parameter("maxRelZ", maxRelZ);
-        this->get_parameter("maxSpeed", maxSpeed);
-        this->get_parameter("dirWeight", dirWeight);
-        this->get_parameter("dirThre", dirThre);
-        this->get_parameter("dirToVehicle", dirToVehicle);
-        this->get_parameter("pathScale", pathScale);
-        this->get_parameter("minPathScale", minPathScale);
-        this->get_parameter("pathScaleStep", pathScaleStep);
-        this->get_parameter("pathScaleBySpeed", pathScaleBySpeed);
-        this->get_parameter("minPathRange", minPathRange);
-        this->get_parameter("pathRangeStep", pathRangeStep);
-        this->get_parameter("pathRangeBySpeed", pathRangeBySpeed);
-        this->get_parameter("pathCropByGoal", pathCropByGoal);
-        this->get_parameter("autonomyMode", autonomyMode);
-        this->get_parameter("autonomySpeed", autonomySpeed);
-        this->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
-        this->get_parameter("joyToCheckObstacleDelay", joyToCheckObstacleDelay);
-        this->get_parameter("goalClearRange", goalClearRange);
-        this->get_parameter("goalX", goalX);
-        this->get_parameter("goalY", goalY);
-
-        // Set default path folder
-        // TODO 这里需要修
-        if (pathFolder.empty()) {
-            pathFolder = "/home/z/rm_simulation/src/local_planner/paths";
-        }
+      float dis = sqrt((pointX - vehicleX) * (pointX - vehicleX) + (pointY - vehicleY) * (pointY - vehicleY));
+      if (dis < adjacentRange && (point.intensity > obstacleHeightThre || useCost)) {
+        point.x = pointX;
+        point.y = pointY;
+        point.z = pointZ;
+        terrainCloudCrop->push_back(point);
+      }
     }
 
-    void setupPublishersAndSubscribers()
-    {
-        // Subscribers
-        subOdometry = this->create_subscription<nav_msgs::msg::Odometry>(
-            "/Odometry", 5, std::bind(&LocalPlanner::odometryHandle, this, std::placeholders::_1));
-        
-        subLaserCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/registered_scan", 5, std::bind(&LocalPlanner::laserCloudHandler, this, std::placeholders::_1));
-        
-        subTerrainCloud = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/terrain_map", 5, std::bind(&LocalPlanner::terrainCloudHandler, this, std::placeholders::_1));
-        
-        subGoal = this->create_subscription<geometry_msgs::msg::PointStamped>(
-            "/way_point", 5, std::bind(&LocalPlanner::goalHandler, this, std::placeholders::_1));
-        
-        subBoundary = this->create_subscription<geometry_msgs::msg::PolygonStamped>(
-            "/navigation_boundary", 5, std::bind(&LocalPlanner::boundaryHandle, this, std::placeholders::_1));
+    terrainCloudDwz->clear();
+    terrainDwzFilter.setInputCloud(terrainCloudCrop);
+    terrainDwzFilter.filter(*terrainCloudDwz);
 
+    newTerrainCloud = true;
+  }
+}
 
-        // Publishers
-        pubLaserCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloud", 5);
-        pubLaserCloud2 = this->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCropPlanner", 5);
-        pubObstacleCloud = this->create_publisher<sensor_msgs::msg::PointCloud2>("/visObstacleCloud", 5);
-        pubMarker = this->create_publisher<visualization_msgs::msg::MarkerArray>("/path_debug", 10);
-        pubPath = this->create_publisher<nav_msgs::msg::Path>("/local_path", 5);
-        path_cost_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("path_cost_viz", 10);
+void joystickHandler(const sensor_msgs::msg::Joy::ConstSharedPtr joy)
+{
+  joyTime = nh->now().seconds();
+  joySpeedRaw = sqrt(joy->axes[3] * joy->axes[3] + joy->axes[4] * joy->axes[4]);
+  joySpeed = joySpeedRaw;
+  if (joySpeed > 1.0) joySpeed = 1.0;
+  if (joy->axes[4] == 0) joySpeed = 0;
 
-        
-#if PLOTPATHSET == 1
-        pubFreePaths = this->create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths", 2);
-#endif
+  if (joySpeed > 0) {
+    joyDir = atan2(joy->axes[3], joy->axes[4]) * 180 / PI;
+    if (joy->axes[4] < 0) joyDir *= -1;
+  }
+
+  if (joy->axes[4] < 0 && !twoWayDrive) joySpeed = 0;
+
+  if (joy->axes[2] > -0.1) {
+    autonomyMode = false;
+  } else {
+    autonomyMode = true;
+  }
+
+  if (joy->axes[5] > -0.1) {
+    checkObstacle = true;
+  } else {
+    checkObstacle = false;
+  }
+}
+
+void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
+{
+  goalX = goal->point.x;
+  goalY = goal->point.y;
+}
+
+void speedHandler(const std_msgs::msg::Float32::ConstSharedPtr speed)
+{
+  double speedTime = nh->now().seconds();
+  if (autonomyMode && speedTime - joyTime > joyToSpeedDelay && joySpeedRaw == 0) {
+    joySpeed = speed->data / maxSpeed;
+
+    if (joySpeed < 0) joySpeed = 0;
+    else if (joySpeed > 1.0) joySpeed = 1.0;
+  }
+}
+
+void boundaryHandler(const geometry_msgs::msg::PolygonStamped::ConstSharedPtr boundary)
+{
+  boundaryCloud->clear();
+  pcl::PointXYZI point, point1, point2;
+  int boundarySize = boundary->polygon.points.size();
+
+  if (boundarySize >= 1) {
+    point2.x = boundary->polygon.points[0].x;
+    point2.y = boundary->polygon.points[0].y;
+    point2.z = boundary->polygon.points[0].z;
+  }
+
+  for (int i = 0; i < boundarySize; i++) {
+    point1 = point2;
+
+    point2.x = boundary->polygon.points[i].x;
+    point2.y = boundary->polygon.points[i].y;
+    point2.z = boundary->polygon.points[i].z;
+
+    if (point1.z == point2.z) {
+      float disX = point1.x - point2.x;
+      float disY = point1.y - point2.y;
+      float dis = sqrt(disX * disX + disY * disY);
+
+      int pointNum = int(dis / terrainVoxelSize) + 1;
+      for (int pointID = 0; pointID < pointNum; pointID++) {
+        point.x = float(pointID) / float(pointNum) * point1.x + (1.0 - float(pointID) / float(pointNum)) * point2.x;
+        point.y = float(pointID) / float(pointNum) * point1.y + (1.0 - float(pointID) / float(pointNum)) * point2.y;
+        point.z = 0;
+        point.intensity = 100.0;
+
+        for (int j = 0; j < pointPerPathThre; j++) {
+          boundaryCloud->push_back(point);
+        }
+      }
+    }
+  }
+}
+
+void addedObstaclesHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr addedObstacles2)
+{
+  addedObstacles->clear();
+  pcl::fromROSMsg(*addedObstacles2, *addedObstacles);
+
+  int addedObstaclesSize = addedObstacles->points.size();
+  for (int i = 0; i < addedObstaclesSize; i++) {
+    addedObstacles->points[i].intensity = 200.0;
+  }
+}
+
+void checkObstacleHandler(const std_msgs::msg::Bool::ConstSharedPtr checkObs)
+{
+  double checkObsTime = nh->now().seconds();
+  if (autonomyMode && checkObsTime - joyTime > joyToCheckObstacleDelay) {
+    checkObstacle = checkObs->data;
+  }
+}
+
+int readPlyHeader(FILE *filePtr)
+{
+  char str[50];
+  int val, pointNum;
+  string strCur, strLast;
+  while (strCur != "end_header") {
+    val = fscanf(filePtr, "%s", str);
+    if (val != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+      exit(1);
     }
 
-    void initializeFilters()
-    {
-        laserDwzFilter.setLeafSize(laserVoxelSize, laserVoxelSize, laserVoxelSize);
-        terrainDwzFilter.setLeafSize(terrainVoxelSize, terrainVoxelSize, terrainVoxelSize);
+    strLast = strCur;
+    strCur = string(str);
+
+    if (strCur == "vertex" && strLast == "element") {
+      val = fscanf(filePtr, "%d", &pointNum);
+      if (val != 1) {
+        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+      }
+    }
+  }
+
+  return pointNum;
+}
+
+void readStartPaths()
+{
+  string fileName = pathFolder + "/startPaths.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  int pointNum = readPlyHeader(filePtr);
+
+  pcl::PointXYZ point;
+  int val1, val2, val3, val4, groupID;
+  for (int i = 0; i < pointNum; i++) {
+    val1 = fscanf(filePtr, "%f", &point.x);
+    val2 = fscanf(filePtr, "%f", &point.y);
+    val3 = fscanf(filePtr, "%f", &point.z);
+    val4 = fscanf(filePtr, "%d", &groupID);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
     }
 
-    void initializePointClouds()
-    {
-        // Initialize point clouds
-        laserCloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        laserCloudCrop.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        laserCloudDWZ.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        plannerCloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        terrainCloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        terrainCloudCrop.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        terrainCloudDwz.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        plannerCloudCrop.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        boundaryCloud.reset(new pcl::PointCloud<pcl::PointXYZI>());
-        plannerCloudBody.reset(new pcl::PointCloud<pcl::PointXYZI>());
+    if (groupID >= 0 && groupID < groupNum) {
+      startPaths[groupID]->push_back(point);
+    }
+  }
 
-        // Initialize laser cloud stack
-        for (int i = 0; i < laserCloudStackNum; i++) {
-            laserCloudStack.push_back(pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>()));
-        }
-
-        // Initialize start paths
-        for (int i = 0; i < groupNum; i++) {
-            startPaths.push_back(pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>()));
-        }
+  fclose(filePtr);
+}
 
 #if PLOTPATHSET == 1
-        // Initialize paths
-        for (int i = 0; i < pathNum; i++) {
-            paths.push_back(pcl::PointCloud<pcl::PointXYZI>::Ptr(new pcl::PointCloud<pcl::PointXYZI>()));
-        }
-        freePaths.reset(new pcl::PointCloud<pcl::PointXYZI>());
+void readPaths()
+{
+  string fileName = pathFolder + "/paths.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  int pointNum = readPlyHeader(filePtr);
+
+  pcl::PointXYZI point;
+  int pointSkipNum = 30;
+  int pointSkipCount = 0;
+  int val1, val2, val3, val4, val5, pathID;
+  for (int i = 0; i < pointNum; i++) {
+    val1 = fscanf(filePtr, "%f", &point.x);
+    val2 = fscanf(filePtr, "%f", &point.y);
+    val3 = fscanf(filePtr, "%f", &point.z);
+    val4 = fscanf(filePtr, "%d", &pathID);
+    val5 = fscanf(filePtr, "%f", &point.intensity);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
+    }
+
+    if (pathID >= 0 && pathID < pathNum) {
+      pointSkipCount++;
+      if (pointSkipCount > pointSkipNum) {
+        paths[pathID]->push_back(point);
+        pointSkipCount = 0;
+      }
+    }
+  }
+
+  fclose(filePtr);
+}
 #endif
 
-        // Initialize correspondences
-        for (int i = 0; i < gridVoxelNum; i++) {
-            correspondences[i].resize(0);
-        }
+void readPathList()
+{
+  string fileName = pathFolder + "/pathList.ply";
+
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
+
+  if (pathNum != readPlyHeader(filePtr)) {
+    RCLCPP_INFO(nh->get_logger(), "Incorrect path number, exit.");
+    exit(1);
+  }
+
+  int val1, val2, val3, val4, val5, pathID, groupID;
+  float endX, endY, endZ;
+  for (int i = 0; i < pathNum; i++) {
+    val1 = fscanf(filePtr, "%f", &endX);
+    val2 = fscanf(filePtr, "%f", &endY);
+    val3 = fscanf(filePtr, "%f", &endZ);
+    val4 = fscanf(filePtr, "%d", &pathID);
+    val5 = fscanf(filePtr, "%d", &groupID);
+
+    if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
     }
 
-    // Callback functions
-    void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
-    {
-        // 这里的vehicle是odom坐标系下面的 需要转换到map坐标系下面
-        odomTime = rclcpp::Time(odom->header.stamp).seconds();
-        double roll, pitch, yaw;
-        geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
-        tf2::Matrix3x3(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w)).getRPY(roll, pitch, yaw);
+    if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
+      pathList[pathID] = groupID;
+      endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180 / PI;
+    }
+  }
 
-        vehicleRoll = roll;
-        vehiclePitch = pitch;
-        vehicleYaw = yaw;
-        vehicleX = odom->pose.pose.position.x;
-        vehicleY = odom->pose.pose.position.y;
-        vehicleZ = odom->pose.pose.position.z;
+  fclose(filePtr);
+}
 
-        // RCLCPP_DEBUG(this->get_logger(), "vehicleX: %f, vehicleY: %f", vehicleX, vehicleY);
+void readCorrespondences()
+{
+  string fileName = pathFolder + "/correspondences.txt";
 
-        // 转换到map坐标系下面
-        try
-        {
-            geometry_msgs::msg::TransformStamped map_to_odom = tfBuffer.lookupTransform("map","odom",odom->header.stamp,100ms);
+  FILE *filePtr = fopen(fileName.c_str(), "r");
+  if (filePtr == NULL) {
+    RCLCPP_INFO(nh->get_logger(), "Cannot read input files, exit.");
+    exit(1);
+  }
 
-            // 构造odom下面的pose
-            geometry_msgs::msg::PoseStamped odom_pose,map_pose;
-            odom_pose.header = odom->header;
-            odom_pose.pose = odom->pose.pose;
-
-            // 执行坐标变换
-            tf2::doTransform(odom_pose,map_pose,map_to_odom);
-
-            vehicleX = map_pose.pose.position.x;
-            vehicleY = map_pose.pose.position.y;
-            vehicleZ = map_pose.pose.position.z;
-
-            
-            
-          }
-          catch (const tf2::TransformException &ex) {
-            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 2000,
-            "TF transform (map->odom) failed: %s", ex.what());
-          }
-          
-        //   RCLCPP_INFO(this->get_logger(),
-        //            "Transformed to map frame: X=%.3f, Y=%.3f, Z=%.3f",
-        //            vehicleX, vehicleY, vehicleZ);
-
+  int val1, gridVoxelID, pathID;
+  for (int i = 0; i < gridVoxelNum; i++) {
+    val1 = fscanf(filePtr, "%d", &gridVoxelID);
+    if (val1 != 1) {
+      RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+        exit(1);
     }
 
-    void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
-    {
-        if (!useTerrainAnalysis) {
-            laserCloud->clear();
-            pcl::fromROSMsg(*laserCloud2, *laserCloud);
+    while (1) {
+      val1 = fscanf(filePtr, "%d", &pathID);
+      if (val1 != 1) {
+        RCLCPP_INFO(nh->get_logger(), "Error reading input files, exit.");
+          exit(1);
+      }
 
-            pcl::PointXYZI point;
-            laserCloudCrop->clear();
-            int laserCloudSize = laserCloud->points.size();
-            for (int i = 0; i < laserCloudSize; i++) {
-                point = laserCloud->points[i];
-                float pointX = point.x;
-                float pointY = point.y;
-                float pointZ = point.z;
-                float dis = sqrt((pointX - vehicleX) * (pointX - vehicleX) + 
-                                (pointY - vehicleY) * (pointY - vehicleY));
-                if (dis < adjacentRange) {
-                    point.x = pointX;
-                    point.y = pointY;
-                    point.z = pointZ;
-                    laserCloudCrop->push_back(point);
-                }
-            }
-
-            laserCloudDWZ->clear();
-            laserDwzFilter.setInputCloud(laserCloudCrop);
-            laserDwzFilter.filter(*laserCloudDWZ);
-
-            newlaserCloud = true;
+      if (pathID != -1) {
+        if (gridVoxelID >= 0 && gridVoxelID < gridVoxelNum && pathID >= 0 && pathID < pathNum) {
+          correspondences[gridVoxelID].push_back(pathID);
         }
+      } else {
+        break;
+      }
     }
+  }
 
-    void terrainCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr terrainCloud2)
-    {
-        // 1. 检查指针是否为空（是否接收到消息）
-        if (!terrainCloud2) {
-            RCLCPP_WARN(this->get_logger(), "Received null terrainCloud2 message (pointer is null).");
-            return;
-        }
-
-        // 2. 检查点云数据是否为空（是否有实际点）
-        if (terrainCloud2->data.empty()) {
-            RCLCPP_INFO(this->get_logger(), "Received empty PointCloud2 message (no data).");
-            return;
-        }
-        
-
-        if (useTerrainAnalysis) {
-            terrainCloud->clear();
-            pcl::fromROSMsg(*terrainCloud2, *terrainCloud);
-
-            pcl::PointXYZI point;
-            terrainCloudCrop->clear();
-            int terrainCloudSize = terrainCloud->points.size();
-            for (int i = 0; i < terrainCloudSize; i++) {
-                point = terrainCloud->points[i];
-                float pointX = point.x;
-                float pointY = point.y;
-                float pointZ = point.z;
-                float dis = std::sqrt((pointX - vehicleX) * (pointX - vehicleX) +
-                                     (pointY - vehicleY) * (pointY - vehicleY));
-                if (dis < adjacentRange && (point.intensity > obstacleHeightThre || useCost)) {
-                    point.x = pointX;
-                    point.y = pointY;
-                    point.z = pointZ;
-                    terrainCloudCrop->push_back(point);
-                }
-            }
-
-            terrainCloudDwz->clear();
-            terrainDwzFilter.setInputCloud(terrainCloudCrop);
-            terrainDwzFilter.filter(*terrainCloudDwz);
-
-            newTerrainCloud = true;
-            terrainInit = true;
-        }
-    }
-
-    void boundaryHandle(const geometry_msgs::msg::PolygonStamped::ConstSharedPtr /*boundary*/)
-    {
-        // Implementation for boundary handling
-    }
-
-    void goalHandler(const geometry_msgs::msg::PointStamped::ConstSharedPtr goal)
-    {
-        std::string frame_id = goal->header.frame_id;
-        goalX = goal->point.x;
-        goalY = goal->point.y;
-        RCLCPP_DEBUG(this->get_logger(), "Goal updated: (%f, %f)", goalX, goalY);
-    }
-
-    // File reading functions (safe versions)
-    static int readPlyHeader_safe(FILE *filePtr, bool &ok)
-    {
-        ok = false;
-        if (!filePtr) return 0;
-        char str[128];
-        int val;
-        int pointNum = 0;
-        std::string strCur, strLast;
-        
-        while (strCur != "end_header") {
-            val = fscanf(filePtr, "%127s", str);
-            if (val != 1) {
-                return 0;
-            }
-            strLast = strCur;
-            strCur = std::string(str);
-            if (strCur == "vertex" && strLast == "element") {
-                val = fscanf(filePtr, "%d", &pointNum);
-                if (val != 1) {
-                    return 0;
-                }
-            }
-        }
-        ok = true;
-        return pointNum;
-    }
-
-    bool readStartPaths_safe()
-    {
-        std::string fileName = pathFolder + "/startPaths.ply";
-        FILE *filePtr = fopen(fileName.c_str(), "r");
-        if (filePtr == NULL) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
-            return false;
-        }
-
-        bool header_ok = false;
-        int pointNum = readPlyHeader_safe(filePtr, header_ok);
-        if (!header_ok || pointNum <= 0) {
-            fclose(filePtr);
-            RCLCPP_ERROR(this->get_logger(), "Invalid PLY header or zero points in %s", fileName.c_str());
-            return false;
-        }
-
-        pcl::PointXYZ point;
-        int val1, val2, val3, val4, groupID;
-        for (int i = 0; i < pointNum; ++i) {
-            val1 = fscanf(filePtr, "%f", &point.x);
-            val2 = fscanf(filePtr, "%f", &point.y);
-            val3 = fscanf(filePtr, "%f", &point.z);
-            val4 = fscanf(filePtr, "%d", &groupID);
-
-            if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1) {
-                fclose(filePtr);
-                RCLCPP_ERROR(this->get_logger(), "Error reading point %d in %s", i, fileName.c_str());
-                return false;
-            }
-
-            if (groupID >= 0 && groupID < groupNum) {
-                startPaths[groupID]->push_back(point);
-            }
-        }
-
-        fclose(filePtr);
-        RCLCPP_INFO(this->get_logger(), "Loaded %d start points from %s", pointNum, fileName.c_str());
-        return true;
-    }
-
-#if PLOTPATHSET == 1
-    bool readPaths_safe()
-    {
-        std::string fileName = pathFolder + "/paths.ply";
-        FILE *filePtr = fopen(fileName.c_str(), "r");
-        if (filePtr == NULL) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
-            return false;
-        }
-
-        bool header_ok = false;
-        int pointNum = readPlyHeader_safe(filePtr, header_ok);
-        if (!header_ok || pointNum <= 0) {
-            fclose(filePtr);
-            RCLCPP_ERROR(this->get_logger(), "Invalid PLY header or zero points in %s", fileName.c_str());
-            return false;
-        }
-
-        pcl::PointXYZI point;
-        int pointSkipNum = 30;
-        int pointSkipCount = 0;
-        int val1, val2, val3, val4, val5, pathID;
-        for (int i = 0; i < pointNum; ++i) {
-            val1 = fscanf(filePtr, "%f", &point.x);
-            val2 = fscanf(filePtr, "%f", &point.y);
-            val3 = fscanf(filePtr, "%f", &point.z);
-            val4 = fscanf(filePtr, "%d", &pathID);
-            val5 = fscanf(filePtr, "%f", &point.intensity);
-
-            if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
-                fclose(filePtr);
-                RCLCPP_ERROR(this->get_logger(), "Error reading points in %s at index %d", fileName.c_str(), i);
-                return false;
-            }
-
-            if (pathID >= 0 && pathID < pathNum) {
-                ++pointSkipCount;
-                if (pointSkipCount > pointSkipNum) {
-                    paths[pathID]->push_back(point);
-                    pointSkipCount = 0;
-                }
-            }
-        }
-
-        fclose(filePtr);
-        RCLCPP_INFO(this->get_logger(), "Loaded %d path points from %s", pointNum, fileName.c_str());
-        return true;
-    }
-#endif
-
-    bool readPathList_safe()
-    {
-        std::string fileName = pathFolder + "/pathList.ply";
-        FILE *filePtr = fopen(fileName.c_str(), "r");
-        if (filePtr == NULL) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
-            return false;
-        }
-
-        bool header_ok = false;
-        int headerCount = readPlyHeader_safe(filePtr, header_ok);
-        if (!header_ok) {
-            fclose(filePtr);
-            RCLCPP_ERROR(this->get_logger(), "Invalid header in %s", fileName.c_str());
-            return false;
-        }
-
-        if (pathNum != headerCount) {
-            fclose(filePtr);
-            RCLCPP_ERROR(this->get_logger(), "Path number mismatch in %s: expected %d, got %d", 
-                        fileName.c_str(), pathNum, headerCount);
-            return false;
-        }
-
-        int val1, val2, val3, val4, val5, pathID, groupID;
-        float endX, endY, endZ;
-        for (int i = 0; i < pathNum; ++i) {
-            val1 = fscanf(filePtr, "%f", &endX);
-            val2 = fscanf(filePtr, "%f", &endY);
-            val3 = fscanf(filePtr, "%f", &endZ);
-            val4 = fscanf(filePtr, "%d", &pathID);
-            val5 = fscanf(filePtr, "%d", &groupID);
-
-            if (val1 != 1 || val2 != 1 || val3 != 1 || val4 != 1 || val5 != 1) {
-                fclose(filePtr);
-                RCLCPP_ERROR(this->get_logger(), "Error reading path list element %d in %s", i, fileName.c_str());
-                return false;
-            }
-
-            if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
-                pathList[pathID] = groupID;
-                endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180.0 / PI;
-            }
-        }
-
-        fclose(filePtr);
-        RCLCPP_INFO(this->get_logger(), "Loaded path list from %s", fileName.c_str());
-        return true;
-    }
-
-    bool readCorrespondences_safe()
-    {
-        std::string fileName = pathFolder + "/correspondences.txt";
-        FILE *filePtr = fopen(fileName.c_str(), "r");
-        if (filePtr == NULL) {
-            RCLCPP_ERROR(this->get_logger(), "Cannot open %s: %s", fileName.c_str(), strerror(errno));
-            return false;
-        }
-
-        int val1, gridVoxelID, pathID;
-        for (int i = 0; i < gridVoxelNum; ++i) {
-            val1 = fscanf(filePtr, "%d", &gridVoxelID);
-            if (val1 != 1) {
-                fclose(filePtr);
-                RCLCPP_ERROR(this->get_logger(), "Error reading gridVoxelID in %s at index %d", fileName.c_str(), i);
-                return false;
-            }
-
-            while (true) {
-                val1 = fscanf(filePtr, "%d", &pathID);
-                if (val1 != 1) {
-                    fclose(filePtr);
-                    RCLCPP_ERROR(this->get_logger(), "Error reading pathID in %s", fileName.c_str());
-                    return false;
-                }
-
-                if (pathID != -1) {
-                    if (gridVoxelID >= 0 && gridVoxelID < gridVoxelNum && pathID >= 0 && pathID < pathNum) {
-                        correspondences[gridVoxelID].push_back(pathID);
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-
-        fclose(filePtr);
-        RCLCPP_INFO(this->get_logger(), "Loaded correspondences from %s", fileName.c_str());
-        return true;
-    }
-
-    void loadPathFiles()
-    {
-        RCLCPP_INFO(this->get_logger(), "pathFolder = %s", pathFolder.c_str());
-
-        if (!readStartPaths_safe()) {
-            RCLCPP_ERROR(this->get_logger(), "readStartPaths_safe failed. Shutting down.");
-            rclcpp::shutdown();
-            return;
-        }
-
-#if PLOTPATHSET == 1
-        if (!readPaths_safe()) {
-            RCLCPP_ERROR(this->get_logger(), "readPaths_safe failed. Shutting down.");
-            rclcpp::shutdown();
-            return;
-        }
-#endif
-
-        if (!readPathList_safe()) {
-            RCLCPP_ERROR(this->get_logger(), "readPathList_safe failed. Shutting down.");
-            rclcpp::shutdown();
-            return;
-        }
-
-        if (!readCorrespondences_safe()) {
-            RCLCPP_ERROR(this->get_logger(), "readCorrespondences_safe failed. Shutting down.");
-            rclcpp::shutdown();
-            return;
-        }
-    }
-
-
-    // 在类的私有成员中添加
-    void visualizeDirectionDifferences(float joyDir, float pathRange)
-    {
-        visualization_msgs::msg::MarkerArray marker_array;
-        
-        // 清除之前的标记
-        visualization_msgs::msg::Marker clear_marker;
-        clear_marker.action = visualization_msgs::msg::Marker::DELETEALL;
-        marker_array.markers.push_back(clear_marker);
-        
-        // 为每个方向创建标记
-        for (int rotDir = 0; rotDir < 36; rotDir++)
-        {
-            float directionAngle = 10.0 * rotDir - 180.0; // 方向角度
-            float angDiff = fabs(joyDir - directionAngle); // 角度差
-
-            // float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
-
-            
-            // 规范化角度差到 [0, 180]
-            // if (angDiff > 180) {
-            //     angDiff = 360 - angDiff;
-            // }
-            
-            // 创建文本标记
-            visualization_msgs::msg::Marker text_marker;
-            text_marker.header.frame_id = "base_link"; // 使用车辆坐标系
-            text_marker.header.stamp = this->now();
-            text_marker.ns = "direction_differences";
-            text_marker.id = rotDir;
-            text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-            text_marker.action = visualization_msgs::msg::Marker::ADD;
-            
-            // 计算标记位置（在车辆周围的圆上）
-            float angle_rad = directionAngle * PI / 180.0;
-            float radius = pathRange * 0.8; // 使用路径范围的80%作为显示半径
-            text_marker.pose.position.x = radius * cos(angle_rad);
-            text_marker.pose.position.y = radius * sin(angle_rad);
-            text_marker.pose.position.z = 1.0; // 稍微抬高避免与地面重叠
-            
-            // 设置文本内容
-            text_marker.text = std::to_string(static_cast<int>(angDiff)) + "°";
-            
-            // 根据角度差设置颜色（角度差越小，颜色越绿）
-            text_marker.scale.z = 0.3; // 文本大小
-            text_marker.color.a = 1.0; // 不透明度
-            
-            // 颜色映射：0°=绿色，180°=红色
-            float color_ratio = angDiff / 180.0;
-            text_marker.color.r = color_ratio;     // 红色分量
-            text_marker.color.g = 1.0 - color_ratio; // 绿色分量
-            text_marker.color.b = 0.0;             // 蓝色分量
-            
-            marker_array.markers.push_back(text_marker);
-            
-            // 可选：添加方向箭头
-            visualization_msgs::msg::Marker arrow_marker;
-            arrow_marker.header.frame_id = "base_link";
-            arrow_marker.header.stamp = this->now();
-            arrow_marker.ns = "direction_arrows";
-            arrow_marker.id = rotDir;
-            arrow_marker.type = visualization_msgs::msg::Marker::ARROW;
-            arrow_marker.action = visualization_msgs::msg::Marker::ADD;
-            
-            // 箭头起始位置
-            arrow_marker.pose.position.x = 0;
-            arrow_marker.pose.position.y = 0;
-            arrow_marker.pose.position.z = 0.5;
-            
-            // 设置箭头方向
-            tf2::Quaternion quat;
-            quat.setRPY(0, 0, angle_rad);
-            arrow_marker.pose.orientation = tf2::toMsg(quat);
-            
-            // 设置箭头大小和颜色
-            arrow_marker.scale.x = radius * 0.8; // 箭头长度
-            arrow_marker.scale.y = 0.1;          // 箭头宽度
-            arrow_marker.scale.z = 0.1;          // 箭头高度
-            
-            arrow_marker.color.a = 0.5; // 半透明
-            arrow_marker.color.r = color_ratio;
-            arrow_marker.color.g = 1.0 - color_ratio;
-            arrow_marker.color.b = 0.0;
-            
-            marker_array.markers.push_back(arrow_marker);
-        }
-        
-        // 发布标记数组
-        pubMarker->publish(marker_array);
-    }
-
-    void processData()
-    {
-        if (newlaserCloud || newTerrainCloud)
-        {
-            if (newlaserCloud)
-            {
-                /* code */
-            }
-
-            if (newTerrainCloud)
-            {
-                newTerrainCloud = false;
-
-                plannerCloud->clear();
-
-                *plannerCloud = *terrainCloudDwz;
-            }
-            
-        }
-
-        // 将 plannerCloud pub出来
-        sensor_msgs::msg::PointCloud2 ros_pc2;
-        pcl::toROSMsg(*plannerCloud,ros_pc2);
-        ros_pc2.header.frame_id = "map";
-        ros_pc2.header.stamp = this->now();
-        pubLaserCloud->publish(ros_pc2);
-        
-        pcl::PointXYZI point;
-        plannerCloudCrop->clear();
-
-        // 
-        int plannerCloudSize = plannerCloud->points.size();
-        for (int i = 0; i < plannerCloudSize; i++)
-        {
-            // 现在point cloud在map坐标系下面
-            // vehicle也在map坐标系下面
-            float pointX1 = plannerCloud->points[i].x - vehicleX;
-            float pointY1 = plannerCloud->points[i].y - vehicleY;
-            float pointZ1 = plannerCloud->points[i].z - vehicleZ;
-
-            point.x = pointX1;
-            point.y = pointY1;
-            point.z = pointZ1;
-            point.intensity = plannerCloud->points[i].intensity;
-
-            float dis = sqrt(point.x * point.x + point.y * point.y);
-            // RCLCPP_INFO(this->get_logger(),"dis : %.2f",dis);
-            if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
-                plannerCloudCrop->push_back(point);
-            }
-        }
-
-        // pub出来看看
-        sensor_msgs::msg::PointCloud2 plannerCloudMsg;
-        pcl::toROSMsg(*plannerCloudCrop,plannerCloudMsg);
-        plannerCloudMsg.header.stamp = this->get_clock()->now();
-        // HACKplannerCloudCrop的坐标系是 base_link 或者 livox_frame ??
-        plannerCloudMsg.header.frame_id = "base_link";
-        pubLaserCloud2->publish(plannerCloudMsg);
-        
-
-        float pathRange = adjacentRange;
-        // RCLCPP_INFO(this->get_logger(),"pathRange : %.2f",pathRange);
-        if (pathRange < minPathRange) 
-        {
-            pathRange = minPathRange;
-        }
-
-        float relativeGoalDis = adjacentRange;
-        
-        if (autonomyMode)
-        {
-            // NOTE:要考虑车辆的相对位置 !!!!!!!
-            float relativeGoalX = goalX - vehicleX;
-            float relativeGoalY = goalY - vehicleY;
-
-            // 计算绝对角度（相对于地图坐标系）
-            float absoluteGoalDir = atan2(relativeGoalY, relativeGoalX) * 180 / PI;
-
-            // 减去车辆航向角，得到相对于车辆前方的角度
-            joyDir = absoluteGoalDir - vehicleYaw * 180 / PI;
-
-            // 规范化到 [-180, 180] 范围
-            while (joyDir > 180) joyDir -= 360;
-            while (joyDir < -180) joyDir += 360;
-
-            relativeGoalDis = sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
-
-            // RCLCPP_INFO(this->get_logger(), "绝对角度: %.2f°, 车辆航向: %.2f°, 相对角度: %.2f°, 距离: %.2f", 
-            //     absoluteGoalDir, vehicleYaw * 180 / PI, joyDir, relativeGoalDis);
-            if (!twoWayDrive) 
-            {
-                if (joyDir > 90.0) 
-                {
-                    joyDir = 90.0;
-                }
-                else if (joyDir < -90.0) 
-                {
-                    joyDir = -90.0;
-                }
-            }
-        }
-
-        // ===========================================================================
-        //                              TAG开始设置路径
-        bool pathFind = false;
-        float defPathScale = pathScale;
-        // 没有理会这里是什么意思
-        if (pathScaleBySpeed)
-        {
-            pathScale = defPathScale * joySpeed;
-        }
-        if (pathScale < minPathScale)
-        {
-            pathScale = minPathScale;
-        }
-        while (pathScale >= minPathScale && pathRange >= minPathRange) 
-        {
-            // 清空之前的评分器
-            for (int i = 0; i < 36 * pathNum; i++) 
-            {
-                clearPathList[i] = 0;
-                pathPenaltyList[i] = 0;
-            }
-
-            // 每个方向都有gropNum个路径组 每个路径组对应一组不同形状的轨迹
-            for (int i = 0; i < 36 * groupNum; i++)
-            {
-                clearPathPerGroupScore[i] = 0;
-            }
-
-            float minObsAngCW = -180.0;
-            float minObsAngCCW = 180.0;
-            float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
-            float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
-
-            pcl::PointCloud<pcl::PointXYZI>::Ptr obstacleVisCloud(new pcl::PointCloud<pcl::PointXYZI>());
-
-
-            // plannerCloudCrop是map坐标系下面的
-
-            // 但是计算的距离是到车辆的 所以需要将点云转换到base link坐标系下面
-            pcl::PointCloud<pcl::PointXYZI>::Ptr plannerCloudBase(new pcl::PointCloud<pcl::PointXYZI>());
-            
-            try {
-                // 获取 map -> base_link 的变换
-                geometry_msgs::msg::TransformStamped tf_map_to_base;
-                // plannerCloudCrop来源于plannerCloud
-                tf_map_to_base = tfBuffer.lookupTransform(
-                    "base_link", "map",
-                    rclcpp::Time(plannerCloud->header.stamp),
-                    rclcpp::Duration::from_seconds(0.1)
-                );
-
-
-                // 将 TF 转换为 Eigen::Isometry3d
-                Eigen::Isometry3d eigen_tf = tf2::transformToEigen(tf_map_to_base.transform);
-
-                // 使用 PCL 的变换函数进行坐标转换
-                pcl::transformPointCloud(*plannerCloudCrop, *plannerCloudBase, eigen_tf.matrix());
-
-                // RCLCPP_INFO(this->get_logger(), "Transformed %zu points from map to base_link frame",
-                //             plannerCloudCrop->points.size());
-
-            } catch (tf2::TransformException &ex) {
-                RCLCPP_WARN(this->get_logger(), "TF transform failed: %s", ex.what());
-                return;
-            }
-
-            int plannerCloudBaseSize = plannerCloudBase->points.size();
-            for (int i = 0; i < plannerCloudBaseSize; i++)
-            {
-                // pathScale 路径尺度（路径的大小或长度与某个参考值（如车辆尺寸或环境尺寸）的比例关系），在狭窄的空间中减小路径规模，或在开放的空间中增加路径规模以优化行进路线
-
-                
-                float x = plannerCloudBase->points[i].x / pathScale;
-                float y = plannerCloudBase->points[i].y / pathScale;
-                float h = plannerCloudBase->points[i].intensity;
-
-                // 这里的dis需要计算的是点云到车辆的距离
-                float dis = std::sqrt(x*x + y*y);
-
-                RCLCPP_INFO(this->get_logger(),"dis :%.2f",dis);
-                if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
-                {
-
-
-                    // 尝试旋转36个方向检查障碍点是否会阻挡该方向下的候选路径
-                    for (int rotDir = 0; rotDir < 36; rotDir++)
-                    {
-                        // 每个旋转方向 当前位置转路径点的角度 转成了弧度
-                        float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
-                        // 当前候选路径方向（rotDir）与目标方向（joyDir）之间的角度差
-                        float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
-
-                        if (angDiff > 180.0) 
-                        {
-                            angDiff = 360.0 - angDiff;
-                        }
-                        // 如果角度差太大
-                        if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
-                            ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) 
-                        {
-                            continue;
-                        }
-
-                        // 将点旋转rotAng度 现在 x2 和 y2都是在base link的坐标系下面旋转的
-
-                        float x2 = cos(rotAng) * x + sin(rotAng) * y;
-                        float y2 = -sin(rotAng) * x + cos(rotAng) * y;
-
-                        // 对y方向进行缩放 ?
-                        float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
-                             * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
-
-                        // 计算网格索引
-                        int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
-                        int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
-                        // 重点关注如何计算的 
-                        if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) 
-                        {
-                            int ind = gridVoxelNumY * indX + indY;
-                            int blockedPathByVoxelNum = correspondences[ind].size();
-                            for (int j = 0; j < blockedPathByVoxelNum; j++) 
-                            {
-                                // 如果是高障碍 增加clearPathList计数
-                                if (h > obstacleHeightThre || !useTerrainAnalysis) 
-                                {
-                                    clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
-                                } 
-                                else 
-                                {
-                                    // 其余情况不算阻挡但是增加路径的惩罚
-                                    if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) 
-                                    {
-                                        pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
-                                    }
-                                }
-                            }
-
-                        }
-
-                    }
-
-                    
-                    
-                }
-                
-                visualization_msgs::msg::MarkerArray marker_array;
-                marker_array.markers.reserve(36);
-
-                for (int rotDir = 0; rotDir < 36; rotDir++) {
-                    visualization_msgs::msg::Marker marker;
-                    marker.header.frame_id = "base_link";  // 可视化以车辆为中心
-                    marker.header.stamp = this->now();
-                    marker.ns = "path_cost";
-                    marker.id = rotDir;
-                    marker.type = visualization_msgs::msg::Marker::ARROW;
-                    marker.action = visualization_msgs::msg::Marker::ADD;
-
-                    // 箭头起点：车辆中心
-                    geometry_msgs::msg::Point p_start;
-                    p_start.x = 0.0;
-                    p_start.y = 0.0;
-                    p_start.z = 0.0;
-
-                    // 箭头终点：根据路径角度
-                    geometry_msgs::msg::Point p_end;
-                    float rotAng = (10.0 * rotDir - 180.0) * M_PI / 180.0;
-                    float base_length = 3.0;  // 基础长度
-                    float cost_scale = 1.0;   // 可调节
-
-                    // 取代价或清晰度作为可视化参数
-                    float cost_value = 0.0;
-                    for (int j = 0; j < pathNum; j++) {
-                        cost_value += pathPenaltyList[pathNum * rotDir + j];
-                    }
-
-                    // 根据代价决定箭头长度（或颜色）
-                    float length = base_length * (1.0 - std::min(cost_value * cost_scale, 0.9f)); // 高代价更短
-
-                    p_end.x = length * cos(rotAng);
-                    p_end.y = length * sin(rotAng);
-                    p_end.z = 0.0;
-
-                    marker.points.push_back(p_start);
-                    marker.points.push_back(p_end);
-
-                    // 颜色：绿色代表通畅，红色代表高代价
-                    std_msgs::msg::ColorRGBA color;
-                    float norm_cost = std::min(cost_value / 2.0f, 1.0f); // 归一化
-                    color.r = norm_cost;
-                    color.g = 1.0 - norm_cost;
-                    color.b = 0.0;
-                    color.a = 1.0;
-                    marker.color = color;
-
-                    marker.scale.x = 0.05;  // 箭头杆粗细
-                    marker.scale.y = 0.1;   // 箭头头部大小
-                    marker.scale.z = 0.1;
-
-                    marker_array.markers.push_back(marker);
-                }
-
-                // 发布
-                path_cost_pub_->publish(marker_array);
-            }
-
-            // 可视化角度差
-            // visualizeDirectionDifferences(joyDir, pathRange);
-            
-        }
-        
-    }
-
-};
-
-// Static member initialization
-int LocalPlanner::lastSelectedGroupID = -1;
+  fclose(filePtr);
+}
 
 int main(int argc, char** argv)
 {
-    rclcpp::init(argc, argv);
-    auto node = std::make_shared<LocalPlanner>();
-    rclcpp::spin(node);
-    rclcpp::shutdown();
-    return 0;
+  rclcpp::init(argc, argv);
+  nh = rclcpp::Node::make_shared("localPlanner");
+
+  nh->declare_parameter<std::string>("pathFolder", pathFolder);
+  nh->declare_parameter<double>("vehicleLength", vehicleLength);
+  nh->declare_parameter<double>("vehicleWidth", vehicleWidth);
+  nh->declare_parameter<double>("sensorOffsetX", sensorOffsetX);
+  nh->declare_parameter<double>("sensorOffsetY", sensorOffsetY);
+  nh->declare_parameter<bool>("twoWayDrive", twoWayDrive);
+  nh->declare_parameter<double>("laserVoxelSize", laserVoxelSize);
+  nh->declare_parameter<double>("terrainVoxelSize", terrainVoxelSize);
+  nh->declare_parameter<bool>("useTerrainAnalysis", useTerrainAnalysis);
+  nh->declare_parameter<bool>("checkObstacle", checkObstacle);
+  nh->declare_parameter<bool>("checkRotObstacle", checkRotObstacle);
+  nh->declare_parameter<double>("adjacentRange", adjacentRange);
+  nh->declare_parameter<double>("obstacleHeightThre", obstacleHeightThre);
+  nh->declare_parameter<double>("groundHeightThre", groundHeightThre);
+  nh->declare_parameter<double>("costHeightThre", costHeightThre);
+  nh->declare_parameter<double>("costScore", costScore);
+  nh->declare_parameter<bool>("useCost", useCost);
+  nh->declare_parameter<int>("pointPerPathThre", pointPerPathThre);
+  nh->declare_parameter<double>("minRelZ", minRelZ);
+  nh->declare_parameter<double>("maxRelZ", maxRelZ);
+  nh->declare_parameter<double>("maxSpeed", maxSpeed);
+  nh->declare_parameter<double>("dirWeight", dirWeight);
+  nh->declare_parameter<double>("dirThre", dirThre);
+  nh->declare_parameter<bool>("dirToVehicle", dirToVehicle);
+  nh->declare_parameter<double>("pathScale", pathScale);
+  nh->declare_parameter<double>("minPathScale", minPathScale);
+  nh->declare_parameter<double>("pathScaleStep", pathScaleStep);
+  nh->declare_parameter<bool>("pathScaleBySpeed", pathScaleBySpeed);
+  nh->declare_parameter<double>("minPathRange", minPathRange);
+  nh->declare_parameter<double>("pathRangeStep", pathRangeStep);
+  nh->declare_parameter<bool>("pathRangeBySpeed", pathRangeBySpeed);
+  nh->declare_parameter<bool>("pathCropByGoal", pathCropByGoal);
+  nh->declare_parameter<bool>("autonomyMode", autonomyMode);
+  nh->declare_parameter<double>("autonomySpeed", autonomySpeed);
+  nh->declare_parameter<double>("joyToSpeedDelay", joyToSpeedDelay);
+  nh->declare_parameter<double>("joyToCheckObstacleDelay", joyToCheckObstacleDelay);
+  nh->declare_parameter<double>("goalClearRange", goalClearRange);
+  nh->declare_parameter<double>("goalX", goalX);
+  nh->declare_parameter<double>("goalY", goalY);
+
+  nh->get_parameter("pathFolder", pathFolder);
+  nh->get_parameter("vehicleLength", vehicleLength);
+  nh->get_parameter("vehicleWidth", vehicleWidth);
+  nh->get_parameter("sensorOffsetX", sensorOffsetX);
+  nh->get_parameter("sensorOffsetY", sensorOffsetY);
+  nh->get_parameter("twoWayDrive", twoWayDrive);
+  nh->get_parameter("laserVoxelSize", laserVoxelSize);
+  nh->get_parameter("terrainVoxelSize", terrainVoxelSize);
+  nh->get_parameter("useTerrainAnalysis", useTerrainAnalysis);
+  nh->get_parameter("checkObstacle", checkObstacle);
+  nh->get_parameter("checkRotObstacle", checkRotObstacle);
+  nh->get_parameter("adjacentRange", adjacentRange);
+  nh->get_parameter("obstacleHeightThre", obstacleHeightThre);
+  nh->get_parameter("groundHeightThre", groundHeightThre);
+  nh->get_parameter("costHeightThre", costHeightThre);
+  nh->get_parameter("costScore", costScore);
+  nh->get_parameter("useCost", useCost);
+  nh->get_parameter("pointPerPathThre", pointPerPathThre);
+  nh->get_parameter("minRelZ", minRelZ);
+  nh->get_parameter("maxRelZ", maxRelZ);
+  nh->get_parameter("maxSpeed", maxSpeed);
+  nh->get_parameter("dirWeight", dirWeight);
+  nh->get_parameter("dirThre", dirThre);
+  nh->get_parameter("dirToVehicle", dirToVehicle);
+  nh->get_parameter("pathScale", pathScale);
+  nh->get_parameter("minPathScale", minPathScale);
+  nh->get_parameter("pathScaleStep", pathScaleStep);
+  nh->get_parameter("pathScaleBySpeed", pathScaleBySpeed);
+  nh->get_parameter("minPathRange", minPathRange);
+  nh->get_parameter("pathRangeStep", pathRangeStep);
+  nh->get_parameter("pathRangeBySpeed", pathRangeBySpeed);
+  nh->get_parameter("pathCropByGoal", pathCropByGoal);
+  nh->get_parameter("autonomyMode", autonomyMode);
+  nh->get_parameter("autonomySpeed", autonomySpeed);
+  nh->get_parameter("joyToSpeedDelay", joyToSpeedDelay);
+  nh->get_parameter("joyToCheckObstacleDelay", joyToCheckObstacleDelay);
+  nh->get_parameter("goalClearRange", goalClearRange);
+  nh->get_parameter("goalX", goalX);
+  nh->get_parameter("goalY", goalY);
+
+  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odometryHandler);
+
+  auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
+
+  auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map", 5, terrainCloudHandler);
+
+  auto subJoystick = nh->create_subscription<sensor_msgs::msg::Joy>("/joy", 5, joystickHandler);
+
+  auto subGoal = nh->create_subscription<geometry_msgs::msg::PointStamped> ("/way_point", 5, goalHandler);
+
+  auto subSpeed = nh->create_subscription<std_msgs::msg::Float32>("/speed", 5, speedHandler);
+
+  auto subBoundary = nh->create_subscription<geometry_msgs::msg::PolygonStamped>("/navigation_boundary", 5, boundaryHandler);
+
+  auto subAddedObstacles = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/added_obstacles", 5, addedObstaclesHandler);
+
+  auto subCheckObstacle = nh->create_subscription<std_msgs::msg::Bool>("/check_obstacle", 5, checkObstacleHandler);
+
+  auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/path", 5);
+  nav_msgs::msg::Path path;
+
+  #if PLOTPATHSET == 1
+  auto pubFreePaths = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/free_paths", 2);
+  #endif
+
+  //auto pubLaserCloud = nh->create_publisher<sensor_msgs::msg::PointCloud2> ("/stacked_scans", 2);
+
+  RCLCPP_INFO(nh->get_logger(), "Reading path files.");
+
+  if (autonomyMode) {
+    joySpeed = autonomySpeed / maxSpeed;
+
+    if (joySpeed < 0) joySpeed = 0;
+    else if (joySpeed > 1.0) joySpeed = 1.0;
+  }
+
+  for (int i = 0; i < laserCloudStackNum; i++) {
+    laserCloudStack[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
+  }
+  for (int i = 0; i < groupNum; i++) {
+    startPaths[i].reset(new pcl::PointCloud<pcl::PointXYZ>());
+  }
+  #if PLOTPATHSET == 1
+  for (int i = 0; i < pathNum; i++) {
+    paths[i].reset(new pcl::PointCloud<pcl::PointXYZI>());
+  }
+  #endif
+  for (int i = 0; i < gridVoxelNum; i++) {
+    correspondences[i].resize(0);
+  }
+
+  laserDwzFilter.setLeafSize(laserVoxelSize, laserVoxelSize, laserVoxelSize);
+  terrainDwzFilter.setLeafSize(terrainVoxelSize, terrainVoxelSize, terrainVoxelSize);
+
+  readStartPaths();
+  #if PLOTPATHSET == 1
+  readPaths();
+  #endif
+  readPathList();
+  readCorrespondences();
+
+  RCLCPP_INFO(nh->get_logger(), "Initialization complete.");
+
+  rclcpp::Rate rate(100);
+  bool status = rclcpp::ok();
+  while (status) {
+    rclcpp::spin_some(nh);
+
+    if (newLaserCloud || newTerrainCloud) {
+      if (newLaserCloud) {
+        newLaserCloud = false;
+
+        laserCloudStack[laserCloudCount]->clear();
+        *laserCloudStack[laserCloudCount] = *laserCloudDwz;
+        laserCloudCount = (laserCloudCount + 1) % laserCloudStackNum;
+
+        plannerCloud->clear();
+        for (int i = 0; i < laserCloudStackNum; i++) {
+          *plannerCloud += *laserCloudStack[i];
+        }
+      }
+
+      if (newTerrainCloud) {
+        newTerrainCloud = false;
+
+        plannerCloud->clear();
+        *plannerCloud = *terrainCloudDwz;
+      }
+
+      float sinVehicleYaw = sin(vehicleYaw);
+      float cosVehicleYaw = cos(vehicleYaw);
+
+      pcl::PointXYZI point;
+      plannerCloudCrop->clear();
+      int plannerCloudSize = plannerCloud->points.size();
+      for (int i = 0; i < plannerCloudSize; i++) {
+        float pointX1 = plannerCloud->points[i].x - vehicleX;
+        float pointY1 = plannerCloud->points[i].y - vehicleY;
+        float pointZ1 = plannerCloud->points[i].z - vehicleZ;
+
+        point.x = pointX1 * cosVehicleYaw + pointY1 * sinVehicleYaw;
+        point.y = -pointX1 * sinVehicleYaw + pointY1 * cosVehicleYaw;
+        point.z = pointZ1;
+        point.intensity = plannerCloud->points[i].intensity;
+
+        float dis = sqrt(point.x * point.x + point.y * point.y);
+        if (dis < adjacentRange && ((point.z > minRelZ && point.z < maxRelZ) || useTerrainAnalysis)) {
+          plannerCloudCrop->push_back(point);
+        }
+      }
+
+      int boundaryCloudSize = boundaryCloud->points.size();
+      for (int i = 0; i < boundaryCloudSize; i++) {
+        point.x = ((boundaryCloud->points[i].x - vehicleX) * cosVehicleYaw 
+                + (boundaryCloud->points[i].y - vehicleY) * sinVehicleYaw);
+        point.y = (-(boundaryCloud->points[i].x - vehicleX) * sinVehicleYaw 
+                + (boundaryCloud->points[i].y - vehicleY) * cosVehicleYaw);
+        point.z = boundaryCloud->points[i].z;
+        point.intensity = boundaryCloud->points[i].intensity;
+
+        float dis = sqrt(point.x * point.x + point.y * point.y);
+        if (dis < adjacentRange) {
+          plannerCloudCrop->push_back(point);
+        }
+      }
+
+      int addedObstaclesSize = addedObstacles->points.size();
+      for (int i = 0; i < addedObstaclesSize; i++) {
+        point.x = ((addedObstacles->points[i].x - vehicleX) * cosVehicleYaw 
+                + (addedObstacles->points[i].y - vehicleY) * sinVehicleYaw);
+        point.y = (-(addedObstacles->points[i].x - vehicleX) * sinVehicleYaw 
+                + (addedObstacles->points[i].y - vehicleY) * cosVehicleYaw);
+        point.z = addedObstacles->points[i].z;
+        point.intensity = addedObstacles->points[i].intensity;
+
+        float dis = sqrt(point.x * point.x + point.y * point.y);
+        if (dis < adjacentRange) {
+          plannerCloudCrop->push_back(point);
+        }
+      }
+
+      float pathRange = adjacentRange;
+      if (pathRangeBySpeed) pathRange = adjacentRange * joySpeed;
+      if (pathRange < minPathRange) pathRange = minPathRange;
+      float relativeGoalDis = adjacentRange;
+
+      if (autonomyMode) {
+        float relativeGoalX = ((goalX - vehicleX) * cosVehicleYaw + (goalY - vehicleY) * sinVehicleYaw);
+        float relativeGoalY = (-(goalX - vehicleX) * sinVehicleYaw + (goalY - vehicleY) * cosVehicleYaw);
+
+        relativeGoalDis = sqrt(relativeGoalX * relativeGoalX + relativeGoalY * relativeGoalY);
+        joyDir = atan2(relativeGoalY, relativeGoalX) * 180 / PI;
+
+        if (!twoWayDrive) {
+          if (joyDir > 90.0) joyDir = 90.0;
+          else if (joyDir < -90.0) joyDir = -90.0;
+        }
+      }
+
+      bool pathFound = false;
+      float defPathScale = pathScale;
+      if (pathScaleBySpeed) pathScale = defPathScale * joySpeed;
+      if (pathScale < minPathScale) pathScale = minPathScale;
+
+      while (pathScale >= minPathScale && pathRange >= minPathRange) {
+        for (int i = 0; i < 36 * pathNum; i++) {
+          clearPathList[i] = 0;
+          pathPenaltyList[i] = 0;
+        }
+        for (int i = 0; i < 36 * groupNum; i++) {
+          clearPathPerGroupScore[i] = 0;
+        }
+
+        float minObsAngCW = -180.0;
+        float minObsAngCCW = 180.0;
+        float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
+        float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
+        int plannerCloudCropSize = plannerCloudCrop->points.size();
+        for (int i = 0; i < plannerCloudCropSize; i++) {
+          float x = plannerCloudCrop->points[i].x / pathScale;
+          float y = plannerCloudCrop->points[i].y / pathScale;
+          float h = plannerCloudCrop->points[i].intensity;
+          float dis = sqrt(x * x + y * y);
+
+          if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) {
+            for (int rotDir = 0; rotDir < 36; rotDir++) {
+              float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+              float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+              if (angDiff > 180.0) {
+                angDiff = 360.0 - angDiff;
+              }
+              if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                  ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
+                continue;
+              }
+
+              float x2 = cos(rotAng) * x + sin(rotAng) * y;
+              float y2 = -sin(rotAng) * x + cos(rotAng) * y;
+
+              float scaleY = x2 / gridVoxelOffsetX + searchRadius / gridVoxelOffsetY 
+                             * (gridVoxelOffsetX - x2) / gridVoxelOffsetX;
+
+              int indX = int((gridVoxelOffsetX + gridVoxelSize / 2 - x2) / gridVoxelSize);
+              int indY = int((gridVoxelOffsetY + gridVoxelSize / 2 - y2 / scaleY) / gridVoxelSize);
+              if (indX >= 0 && indX < gridVoxelNumX && indY >= 0 && indY < gridVoxelNumY) {
+                int ind = gridVoxelNumY * indX + indY;
+                int blockedPathByVoxelNum = correspondences[ind].size();
+                for (int j = 0; j < blockedPathByVoxelNum; j++) {
+                  if (h > obstacleHeightThre || !useTerrainAnalysis) {
+                    clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
+                  } else {
+                    if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) {
+                      pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          if (dis < diameter / pathScale && (fabs(x) > vehicleLength / pathScale / 2.0 || fabs(y) > vehicleWidth / pathScale / 2.0) && 
+              (h > obstacleHeightThre || !useTerrainAnalysis) && checkRotObstacle) {
+            float angObs = atan2(y, x) * 180.0 / PI;
+            if (angObs > 0) {
+              if (minObsAngCCW > angObs - angOffset) minObsAngCCW = angObs - angOffset;
+              if (minObsAngCW < angObs + angOffset - 180.0) minObsAngCW = angObs + angOffset - 180.0;
+            } else {
+              if (minObsAngCW < angObs + angOffset) minObsAngCW = angObs + angOffset;
+              if (minObsAngCCW > 180.0 + angObs - angOffset) minObsAngCCW = 180.0 + angObs - angOffset;
+            }
+          }
+        }
+
+        if (minObsAngCW > 0) minObsAngCW = 0;
+        if (minObsAngCCW < 0) minObsAngCCW = 0;
+
+        for (int i = 0; i < 36 * pathNum; i++) {
+          int rotDir = int(i / pathNum);
+          float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+          if (angDiff > 180.0) {
+            angDiff = 360.0 - angDiff;
+          }
+          if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+              ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
+            continue;
+          }
+
+          if (clearPathList[i] < pointPerPathThre) {
+            float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
+            if (penaltyScore < costScore) penaltyScore = costScore;
+
+            float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
+            if (dirDiff > 360.0) {
+              dirDiff -= 360.0;
+            }
+            if (dirDiff > 180.0) {
+              dirDiff = 360.0 - dirDiff;
+            }
+
+            float rotDirW;
+            if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
+            else rotDirW = fabs(fabs(rotDir - 27) + 1);
+            float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
+            if (score > 0) {
+              clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
+            }
+          }
+        }
+
+        float maxScore = 0;
+        int selectedGroupID = -1;
+        for (int i = 0; i < 36 * groupNum; i++) {
+          int rotDir = int(i / groupNum);
+          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+          float rotDeg = 10.0 * rotDir;
+          if (rotDeg > 180.0) rotDeg -= 360.0;
+          if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+              (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+            maxScore = clearPathPerGroupScore[i];
+            selectedGroupID = i;
+          }
+        }
+
+        if (selectedGroupID >= 0) {
+          int rotDir = int(selectedGroupID / groupNum);
+          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+
+          selectedGroupID = selectedGroupID % groupNum;
+          int selectedPathLength = startPaths[selectedGroupID]->points.size();
+          path.poses.resize(selectedPathLength);
+          for (int i = 0; i < selectedPathLength; i++) {
+            float x = startPaths[selectedGroupID]->points[i].x;
+            float y = startPaths[selectedGroupID]->points[i].y;
+            float z = startPaths[selectedGroupID]->points[i].z;
+            float dis = sqrt(x * x + y * y);
+
+            if (dis <= pathRange / pathScale && dis <= relativeGoalDis / pathScale) {
+              path.poses[i].pose.position.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+              path.poses[i].pose.position.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+              path.poses[i].pose.position.z = pathScale * z;
+            } else {
+              path.poses.resize(i);
+              break;
+            }
+          }
+
+          path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+          path.header.frame_id = "vehicle";
+          pubPath->publish(path);
+
+          #if PLOTPATHSET == 1
+          freePaths->clear();
+          for (int i = 0; i < 36 * pathNum; i++) {
+            int rotDir = int(i / pathNum);
+            float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+            float rotDeg = 10.0 * rotDir;
+            if (rotDeg > 180.0) rotDeg -= 360.0;
+            float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
+            if (angDiff > 180.0) {
+              angDiff = 360.0 - angDiff;
+            }
+            if ((angDiff > dirThre && !dirToVehicle) || (fabs(10.0 * rotDir - 180.0) > dirThre && fabs(joyDir) <= 90.0 && dirToVehicle) ||
+                ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle) || 
+                !((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+                (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+              continue;
+            }
+
+            if (clearPathList[i] < pointPerPathThre) {
+              int freePathLength = paths[i % pathNum]->points.size();
+              for (int j = 0; j < freePathLength; j++) {
+                point = paths[i % pathNum]->points[j];
+
+                float x = point.x;
+                float y = point.y;
+                float z = point.z;
+
+                float dis = sqrt(x * x + y * y);
+                if (dis <= pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal)) {
+                  point.x = pathScale * (cos(rotAng) * x - sin(rotAng) * y);
+                  point.y = pathScale * (sin(rotAng) * x + cos(rotAng) * y);
+                  point.z = pathScale * z;
+                  point.intensity = 1.0;
+
+                  freePaths->push_back(point);
+                }
+              }
+            }
+          }
+
+          sensor_msgs::msg::PointCloud2 freePaths2;
+          pcl::toROSMsg(*freePaths, freePaths2);
+          freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+          freePaths2.header.frame_id = "vehicle";
+          pubFreePaths->publish(freePaths2);
+          #endif
+        }
+
+        if (selectedGroupID < 0) {
+          if (pathScale >= minPathScale + pathScaleStep) {
+            pathScale -= pathScaleStep;
+            pathRange = adjacentRange * pathScale / defPathScale;
+          } else {
+            pathRange -= pathRangeStep;
+          }
+        } else {
+          pathFound = true;
+          break;
+        }
+      }
+      pathScale = defPathScale;
+
+      if (!pathFound) {
+        path.poses.resize(1);
+        path.poses[0].pose.position.x = 0;
+        path.poses[0].pose.position.y = 0;
+        path.poses[0].pose.position.z = 0;
+
+        path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+        path.header.frame_id = "vehicle";
+        pubPath->publish(path);
+
+        #if PLOTPATHSET == 1
+        freePaths->clear();
+        sensor_msgs::msg::PointCloud2 freePaths2;
+        pcl::toROSMsg(*freePaths, freePaths2);
+        freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+        freePaths2.header.frame_id = "vehicle";
+        pubFreePaths->publish(freePaths2);
+        #endif
+      }
+
+      /*sensor_msgs::msg::PointCloud2 plannerCloud2;
+      pcl::toROSMsg(*plannerCloudCrop, plannerCloud2);
+      plannerCloud2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+      plannerCloud2.header.frame_id = "vehicle";
+      pubLaserCloud->publish(plannerCloud2);*/
+    }
+
+    status = rclcpp::ok();
+    rate.sleep();
+  }
+
+  return 0;
 }

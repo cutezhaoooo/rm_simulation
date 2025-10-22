@@ -36,7 +36,6 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl_ros/transforms.hpp>
 
 #include "message_filters/subscriber.h"
 #include "message_filters/synchronizer.h"
@@ -44,14 +43,42 @@
 #include "rmw/types.h"
 #include "rmw/qos_profiles.h"
 
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
-#include "tf2_sensor_msgs/tf2_sensor_msgs.hpp"
+using namespace std;
 
-rclcpp::Time odomTime;
+const double PI = 3.1415926;
 
+bool use_gazebo_time = false;
+double cameraOffsetZ = 0;
 double sensorOffsetX = 0;
 double sensorOffsetY = 0;
+double vehicleHeight = 0.75;
+double terrainVoxelSize = 0.05;
+double groundHeightThre = 0.1;
+bool adjustZ = false;
+double terrainRadiusZ = 0.5;
+int minTerrainPointNumZ = 10;
+double smoothRateZ = 0.2;
+bool adjustIncl = false;
+double terrainRadiusIncl = 1.5;
+int minTerrainPointNumIncl = 500;
+double smoothRateIncl = 0.2;
+double InclFittingThre = 0.2;
+double maxIncl = 30.0;
+
+const int systemDelay = 5;
+int systemInitCount = 0;
+bool systemInited = false;
+
+pcl::PointCloud<pcl::PointXYZ>::Ptr scanRawData(new pcl::PointCloud<pcl::PointXYZ>());
+
+pcl::PointCloud<pcl::PointXYZI>::Ptr scanData(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudIncl(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
+
+std::vector<int> scanInd;
+
+rclcpp::Time odomTime;
 
 float vehicleX = 0;
 float vehicleY = 0;
@@ -67,174 +94,401 @@ float terrainZ = 0;
 float terrainRoll = 0;
 float terrainPitch = 0;
 
-// TODO:仿真里面适配没有点云强度
-pcl::PointCloud<pcl::PointXYZ>::Ptr scanRawData(new pcl::PointCloud<pcl::PointXYZ>());
+const int stackNum = 400;
+float vehicleXStack[stackNum];
+float vehicleYStack[stackNum];
+float vehicleZStack[stackNum];
+float vehicleRollStack[stackNum];
+float vehiclePitchStack[stackNum];
+float vehicleYawStack[stackNum];
+float terrainRollStack[stackNum];
+float terrainPitchStack[stackNum];
+double odomTimeStack[stackNum];
+int odomSendIDPointer = -1;
+int odomRecIDPointer = 0;
 
-pcl::PointCloud<pcl::PointXYZI>::Ptr scanData(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloud(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudIncl(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZI>::Ptr terrainCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::VoxelGrid<pcl::PointXYZI> terrainDwzFilter;
 
 rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubScanPointer;
 
-// 声明全局共享指针
-std::shared_ptr<tf2_ros::Buffer> tfBuffer;
-std::shared_ptr<tf2_ros::TransformListener> tfListener;
-
-std::vector<int> scanInd;
-
-rclcpp::Node::SharedPtr nh;
-
-void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
-{
-    // odomTime = rclcpp::Time(odom->header.stamp).seconds();
-    // double roll,pitch,yaw;
-    // geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
-    // tf2::Matrix3x3(tf2::Quaternion(geoQuat.x,geoQuat.y,geoQuat.z,geoQuat.w)).getRPY(roll,pitch,yaw);
-
-    // vehicleRoll = roll;
-    // vehiclePitch = pitch;
-    // vehicleYaw = yaw;
-
-    // // 都是根据odom的值来更新vehicleX的位置??
-    // vehicleX = odom->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
-    // vehicleY = odom->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
-    // // 打印 vehicleX 和 vehicleY的值
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
-    // vehicleZ = odom->pose.pose.position.z;
-    double vehicleX = odom->pose.pose.position.x;
-    double vehicleY = odom->pose.pose.position.y;
-    // double vehicleZ = odom->pose.pose.position.z;
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX:%f , vehicleY :%f",vehicleX,vehicleY);
-}
-
 void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 {
-    // 确认输入坐标系
-    std::string source_frame = scanIn->header.frame_id;
-    const std::string target_frame = "map";
-
-    // 打印一次 frame id
-    static bool printed = false;
-    if (!printed)
-    {
-        RCLCPP_INFO(nh->get_logger(), "Incoming scan frame_id: %s", source_frame.c_str());
-        printed = true;
+  if (!systemInited) {
+    systemInitCount++;
+    if (systemInitCount > systemDelay) {
+      systemInited = true;
     }
-
-    // 转为 PCL 并修复强度
-    pcl::fromROSMsg(*scanIn, *scanRawData);
-    pcl::removeNaNFromPointCloud(*scanRawData, *scanRawData, scanInd);
-
-    scanData->clear();
-    scanData->reserve(scanRawData->size());
-    for (const auto &pt : *scanRawData)
-    {
-        pcl::PointXYZI point;
-        point.x = pt.x;
-        point.y = pt.y;
-        point.z = pt.z;
-        point.intensity = 100.0f;
-        scanData->points.push_back(point);
-    }
-
-    sensor_msgs::msg::PointCloud2 scanMsg;
-    pcl::toROSMsg(*scanData, scanMsg);
-    scanMsg.header = scanIn->header;
-
-    // 取点云时间戳
-    rclcpp::Time timestamp = scanIn->header.stamp;
-
-
-    bool use_sim_time = nh->get_parameter("use_sim_time").as_bool();
-    if (use_sim_time)
-    {
-        RCLCPP_WARN(nh->get_logger(), "⚠ use_sim_time = true, switching to system time!");
-        nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
-    }
-
-
-    // ✅ 尝试等待 TF（最多 0.5 秒）
-    if (!tfBuffer->canTransform(target_frame, source_frame, rclcpp::Time(0)))
-    {
-        RCLCPP_WARN(nh->get_logger(),
-                    "❌ Unable to transform from '%s' to '%s' at time %.3f (no TF available)",
-                    source_frame.c_str(), target_frame.c_str(),
-                    timestamp.seconds());
-        return;
-    }
-
-    try
-    {
-        sensor_msgs::msg::PointCloud2 scanOut;
-
-        // ✅ 建议使用 lookupTransform + tf2::doTransform，而不是 pcl_ros::transformPointCloud
-        // rclcpp::Time now = nh->get_clock()->now();
-        // auto t = rclcpp::Clock().now();   
-        // RCLCPP_INFO(nh->get_logger(), "[rclcpp::Clock().now()] sec:%lf nano:%ld", t.seconds(), t.nanoseconds());
-
-        // std::chrono::steady_clock::time_point td = std::chrono::steady_clock::now(); 
-        // std::chrono::steady_clock::duration dtn = td.time_since_epoch();
-        // double secs = dtn.count() * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
-        // RCLCPP_INFO(nh->get_logger(), "[std::chrono::steady_clock::now()] sec:%lf", secs);
-        
-        // auto t2 = nh->get_clock()->now();
-        // RCLCPP_INFO(nh->get_logger(), "[get_clock()->now()] sec:%lf nano:%ld", t2.seconds(), t2.nanoseconds());
-
-        // auto t3 = nh->now();
-        // RCLCPP_INFO(nh->get_logger(), "[this->now()] sec:%lf nano:%ld", t3.seconds(), t3.nanoseconds());
-
-
-        geometry_msgs::msg::TransformStamped tfStamped =
-            tfBuffer->lookupTransform(target_frame, source_frame, nh->get_clock()->now(), rclcpp::Duration::from_seconds(0.1));
+    return;
+  }
 
 
 
-        tf2::doTransform(scanMsg, scanOut, tfStamped);
+  double scanTime = rclcpp::Time(scanIn->header.stamp).seconds();
+  if (odomSendIDPointer < 0)
+  {
+    return;
+  }
+  while (odomTimeStack[(odomRecIDPointer + 1) % stackNum] < scanTime &&
+         odomRecIDPointer != (odomSendIDPointer + 1) % stackNum)
+  {
+    odomRecIDPointer = (odomRecIDPointer + 1) % stackNum;
+  }
 
-        scanOut.header.stamp = timestamp;
-        scanOut.header.frame_id = target_frame;
-        pubScanPointer->publish(scanOut);
-    }
-    catch (tf2::TransformException &ex)
-    {
-        RCLCPP_ERROR(nh->get_logger(), "Transform failed: %s", ex.what());
-    }
+  double odomRecTime = odomTime.seconds();
+  float vehicleRecX = vehicleX;
+  float vehicleRecY = vehicleY;
+  float vehicleRecZ = vehicleZ;
+  float terrainRecRoll = terrainRoll;
+  float terrainRecPitch = terrainPitch;
+
+  if (use_gazebo_time)
+  {
+    odomRecTime = odomTimeStack[odomRecIDPointer];
+    vehicleRecX = vehicleXStack[odomRecIDPointer];
+    vehicleRecY = vehicleYStack[odomRecIDPointer];
+    vehicleRecZ = vehicleZStack[odomRecIDPointer];
+    terrainRecRoll = terrainRollStack[odomRecIDPointer];
+    terrainRecPitch = terrainPitchStack[odomRecIDPointer];
+  }
+
+  float sinTerrainRecRoll = sin(terrainRecRoll);
+  float cosTerrainRecRoll = cos(terrainRecRoll);
+  float sinTerrainRecPitch = sin(terrainRecPitch);
+  float cosTerrainRecPitch = cos(terrainRecPitch);
+
+  scanRawData->clear();
+
+
+  
+  pcl::fromROSMsg(*scanIn, *scanRawData);
+  pcl::removeNaNFromPointCloud(*scanRawData, *scanRawData, scanInd);
+  
+  int scanDataSize = scanRawData->points.size();
+  
+  // 使用 push_back 逐个添加点
+  for (int i = 0; i < scanDataSize; i++)
+  {
+      float pointX1 = scanRawData->points[i].x;
+      float pointY1 = scanRawData->points[i].y * cosTerrainRecRoll - scanRawData->points[i].z * sinTerrainRecRoll;
+      float pointZ1 = scanRawData->points[i].y * sinTerrainRecRoll + scanRawData->points[i].z * cosTerrainRecRoll;
+      float pointX2 = pointX1 * cosTerrainRecPitch + pointZ1 * sinTerrainRecPitch;
+      float pointY2 = pointY1;
+      float pointZ2 = -pointX1 * sinTerrainRecPitch + pointZ1 * cosTerrainRecPitch;
+      float pointX3 = pointX2 + vehicleRecX;
+      float pointY3 = pointY2 + vehicleRecY;
+      float pointZ3 = pointZ2 + vehicleRecZ;
+      // 使用 push_back 安全添加点
+      pcl::PointXYZI point;
+      point.x = pointX3;
+      point.y = pointY3;
+      point.z = pointZ3;
+      point.intensity = 100;
+      scanData->push_back(point);
+  }
+
+  // publish 5Hz registered scan messages
+  sensor_msgs::msg::PointCloud2 scanData2;
+  pcl::toROSMsg(*scanData, scanData2);
+  scanData2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomRecTime * 1e9));
+  scanData2.header.frame_id = "map";
+  pubScanPointer->publish(scanData2);
 }
 
+void terrainCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr terrainCloud2)
+{
+  // 地面倾斜度
 
+  if (!adjustZ && !adjustIncl)
+  {
+    return;
+  }
+
+  terrainCloud->clear();
+  pcl::fromROSMsg(*terrainCloud2, *terrainCloud);
+
+  pcl::PointXYZI point;
+  terrainCloudIncl->clear();
+  int terrainCloudSize = terrainCloud->points.size();
+  double elevMean = 0;
+  int elevCount = 0;
+  bool terrainValid = true;
+  for (int i = 0; i < terrainCloudSize; i++)
+  {
+    point = terrainCloud->points[i];
+
+    float dis = sqrt((point.x - vehicleX) * (point.x - vehicleX) + (point.y - vehicleY) * (point.y - vehicleY));
+
+    if (dis < terrainRadiusZ)
+    {
+      if (point.intensity < groundHeightThre)
+      {
+        elevMean += point.z;
+        elevCount++;
+      }
+      else
+      {
+        terrainValid = false;
+      }
+    }
+
+    if (dis < terrainRadiusIncl && point.intensity < groundHeightThre)
+    {
+      terrainCloudIncl->push_back(point);
+    }
+  }
+
+  if (elevCount >= minTerrainPointNumZ)
+    elevMean /= elevCount;
+  else
+    terrainValid = false;
+
+  if (terrainValid && adjustZ)
+  {
+    terrainZ = (1.0 - smoothRateZ) * terrainZ + smoothRateZ * elevMean;
+  }
+
+  terrainCloudDwz->clear();
+  terrainDwzFilter.setInputCloud(terrainCloudIncl);
+  terrainDwzFilter.filter(*terrainCloudDwz);
+  int terrainCloudDwzSize = terrainCloudDwz->points.size();
+
+  if (terrainCloudDwzSize < minTerrainPointNumIncl || !terrainValid)
+  {
+    return;
+  }
+
+  cv::Mat matA(terrainCloudDwzSize, 2, CV_32F, cv::Scalar::all(0));
+  cv::Mat matAt(2, terrainCloudDwzSize, CV_32F, cv::Scalar::all(0));
+  cv::Mat matAtA(2, 2, CV_32F, cv::Scalar::all(0));
+  cv::Mat matB(terrainCloudDwzSize, 1, CV_32F, cv::Scalar::all(0));
+  cv::Mat matAtB(2, 1, CV_32F, cv::Scalar::all(0));
+  cv::Mat matX(2, 1, CV_32F, cv::Scalar::all(0));
+
+  int inlierNum = 0;
+  matX.at<float>(0, 0) = terrainPitch;
+  matX.at<float>(1, 0) = terrainRoll;
+  // 最小二乘计算地面倾斜度
+  for (int iterCount = 0; iterCount < 5; iterCount++)
+  {
+    int outlierCount = 0;
+    for (int i = 0; i < terrainCloudDwzSize; i++)
+    {
+      point = terrainCloudDwz->points[i];
+
+      matA.at<float>(i, 0) = -point.x + vehicleX;
+      matA.at<float>(i, 1) = point.y - vehicleY;
+      matB.at<float>(i, 0) = point.z - elevMean;
+
+      if (fabs(matA.at<float>(i, 0) * matX.at<float>(0, 0) + matA.at<float>(i, 1) * matX.at<float>(1, 0) -
+               matB.at<float>(i, 0)) > InclFittingThre &&
+          iterCount > 0)
+      {
+        matA.at<float>(i, 0) = 0;
+        matA.at<float>(i, 1) = 0;
+        matB.at<float>(i, 0) = 0;
+        outlierCount++;
+      }
+    }
+
+    cv::transpose(matA, matAt);
+    matAtA = matAt * matA;
+    matAtB = matAt * matB;
+    cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
+
+    if (inlierNum == terrainCloudDwzSize - outlierCount)
+      break;
+    inlierNum = terrainCloudDwzSize - outlierCount;
+  }
+
+  if (inlierNum < minTerrainPointNumIncl || fabs(matX.at<float>(0, 0)) > maxIncl * PI / 180.0 ||
+      fabs(matX.at<float>(1, 0)) > maxIncl * PI / 180.0)
+  {
+    terrainValid = false;
+  }
+
+  if (terrainValid && adjustIncl)
+  {
+    terrainPitch = (1.0 - smoothRateIncl) * terrainPitch + smoothRateIncl * matX.at<float>(0, 0);
+    terrainRoll = (1.0 - smoothRateIncl) * terrainRoll + smoothRateIncl * matX.at<float>(1, 0);
+  }
+}
+
+void speedHandler(const geometry_msgs::msg::TwistStamped::ConstSharedPtr speedIn)
+{
+  vehicleSpeed = speedIn->twist.linear.x;
+  vehicleYawRate = speedIn->twist.angular.z;
+}
 
 int main(int argc, char** argv)
 {
-    rclcpp::init(argc,argv);
-    nh = rclcpp::Node::make_shared("vehicleSimulator");
+  rclcpp::init(argc, argv);
+  auto nh = rclcpp::Node::make_shared("vehicleSimulator");
 
-    nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
+  nh->declare_parameter<bool>("use_gazebo_time", use_gazebo_time);
+  nh->declare_parameter<double>("cameraOffsetZ", cameraOffsetZ);
+  nh->declare_parameter<double>("sensorOffsetX", sensorOffsetX);
+  nh->declare_parameter<double>("sensorOffsetY", sensorOffsetY);
+  nh->declare_parameter<double>("vehicleHeight", vehicleHeight);
+  nh->declare_parameter<double>("vehicleX", vehicleX);
+  nh->declare_parameter<double>("vehicleY", vehicleY);
+  nh->declare_parameter<double>("vehicleZ", vehicleZ);
+  nh->declare_parameter<double>("terrainZ", terrainZ);
+  nh->declare_parameter<double>("vehicleYaw", vehicleYaw);
+  nh->declare_parameter<double>("terrainVoxelSize", terrainVoxelSize);
+  nh->declare_parameter<double>("groundHeightThre", groundHeightThre);
+  nh->declare_parameter<bool>("adjustZ", adjustZ);
+  nh->declare_parameter<double>("terrainRadiusZ", terrainRadiusZ);
+  nh->declare_parameter<int>("minTerrainPointNumZ", minTerrainPointNumZ);
+  nh->declare_parameter<bool>("adjustIncl", adjustIncl);
+  nh->declare_parameter<double>("terrainRadiusIncl", terrainRadiusIncl);
+  nh->declare_parameter<int>("minTerrainPointNumIncl", minTerrainPointNumIncl);
+  nh->declare_parameter<double>("InclFittingThre", InclFittingThre);
+  nh->declare_parameter<double>("maxIncl", maxIncl);
 
-    // 初始化 TF Buffer 和 Listener
-    tfBuffer = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
-    tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
+  nh->get_parameter("use_gazebo_time", use_gazebo_time);
+  nh->get_parameter("cameraOffsetZ", cameraOffsetZ);
+  nh->get_parameter("sensorOffsetX", sensorOffsetX);
+  nh->get_parameter("sensorOffsetY", sensorOffsetY);
+  nh->get_parameter("vehicleHeight", vehicleHeight);
+  nh->get_parameter("vehicleX", vehicleX);
+  nh->get_parameter("vehicleY", vehicleY);
+  nh->get_parameter("vehicleZ", vehicleZ);
+  nh->get_parameter("terrainZ", terrainZ);
+  nh->get_parameter("vehicleYaw", vehicleYaw);
+  nh->get_parameter("terrainVoxelSize", terrainVoxelSize);
+  nh->get_parameter("groundHeightThre", groundHeightThre);
+  nh->get_parameter("adjustZ", adjustZ);
+  nh->get_parameter("terrainRadiusZ", terrainRadiusZ);
+  nh->get_parameter("minTerrainPointNumZ", minTerrainPointNumZ);
+  nh->get_parameter("adjustIncl", adjustIncl);
+  nh->get_parameter("terrainRadiusIncl", terrainRadiusIncl);
+  nh->get_parameter("minTerrainPointNumIncl", minTerrainPointNumIncl);
+  nh->get_parameter("InclFittingThre", InclFittingThre);
+  nh->get_parameter("maxIncl", maxIncl);
 
-    auto subScan = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/livox/lidar/pointcloud",2,scanHandler);
+  auto subScan = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/livox/lidar/pointcloud", 2, scanHandler);
 
-    pubScanPointer = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/registered_scan",2);
+  auto subTerrainCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/terrain_map", 2, terrainCloudHandler);
 
-    auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
+  auto subSpeed = nh->create_subscription<geometry_msgs::msg::TwistStamped>("/cmd_vel", 5, speedHandler);
 
+  // auto pubVehicleOdom = nh->create_publisher<nav_msgs::msg::Odometry>("/Odometry", 5);
+  nav_msgs::msg::Odometry odomData;
+  // 
+  odomData.header.frame_id = "map";
+  odomData.child_frame_id = "sensor";
 
+  auto tfBroadcaster = std::make_unique<tf2_ros::TransformBroadcaster>(*nh);
+  tf2::Stamped<tf2::Transform> odomTrans;
+  geometry_msgs::msg::TransformStamped transformTfGeom ; 
+  odomTrans.frame_id_ = "map";
 
+  gazebo_msgs::msg::EntityState cameraState;
+  cameraState.name = "camera";
+  gazebo_msgs::msg::EntityState lidarState;
+  lidarState.name = "lidar";
+  gazebo_msgs::msg::EntityState robotState;
+  robotState.name = "robot";
 
-    rclcpp::Rate rate(200);
-    bool status = rclcpp::ok();
-    while (status)
-    {
-        rclcpp::spin_some(nh);
+  rclcpp::Client<gazebo_msgs::srv::SetEntityState>::SharedPtr client = nh->create_client<gazebo_msgs::srv::SetEntityState>("/set_entity_state");
+  auto request  = std::make_shared<gazebo_msgs::srv::SetEntityState::Request>();
 
-        status = rclcpp::ok();
-        rate.sleep();
-    }
+  pubScanPointer = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/registered_scan", 2);
+
+  terrainDwzFilter.setLeafSize(terrainVoxelSize, terrainVoxelSize, terrainVoxelSize);
+
+  RCLCPP_INFO(nh->get_logger(), "Simulation started.");
+  
+  rclcpp::Rate rate(200);
+  bool status = rclcpp::ok();
+  while (status)
+  {
+    rclcpp::spin_some(nh);
+    float vehicleRecRoll = vehicleRoll;
+    float vehicleRecPitch = vehiclePitch;
+    float vehicleRecZ = vehicleZ;
+
+    vehicleRoll = terrainRoll * cos(vehicleYaw) + terrainPitch * sin(vehicleYaw);
+    vehiclePitch = -terrainRoll * sin(vehicleYaw) + terrainPitch * cos(vehicleYaw);
+    vehicleYaw += 0.005 * vehicleYawRate;
+    if (vehicleYaw > PI)
+      vehicleYaw -= 2 * PI;
+    else if (vehicleYaw < -PI)
+      vehicleYaw += 2 * PI;
+
+    vehicleX += 0.005 * cos(vehicleYaw) * vehicleSpeed +
+                0.005 * vehicleYawRate * (-sin(vehicleYaw) * sensorOffsetX - cos(vehicleYaw) * sensorOffsetY);
+    vehicleY += 0.005 * sin(vehicleYaw) * vehicleSpeed +
+                0.005 * vehicleYawRate * (cos(vehicleYaw) * sensorOffsetX - sin(vehicleYaw) * sensorOffsetY);
+    vehicleZ = terrainZ + vehicleHeight;
+
+    odomTime = nh->now();
     
-    rclcpp::shutdown();
-    return 0;
-}
+    odomSendIDPointer = (odomSendIDPointer + 1) % stackNum;
+    odomTimeStack[odomSendIDPointer] = odomTime.seconds();
+    vehicleXStack[odomSendIDPointer] = vehicleX;
+    vehicleYStack[odomSendIDPointer] = vehicleY;
+    vehicleZStack[odomSendIDPointer] = vehicleZ;
+    vehicleRollStack[odomSendIDPointer] = vehicleRoll;
+    vehiclePitchStack[odomSendIDPointer] = vehiclePitch;
+    vehicleYawStack[odomSendIDPointer] = vehicleYaw;
+    terrainRollStack[odomSendIDPointer] = terrainRoll;
+    terrainPitchStack[odomSendIDPointer] = terrainPitch;
 
+    // publish 200Hz odometry messages
+    tf2::Quaternion quat_tf;
+    quat_tf.setRPY(vehicleRoll, vehiclePitch, vehicleYaw);
+    geometry_msgs::msg::Quaternion geoQuat;
+    tf2::convert(quat_tf, geoQuat);
+
+    odomData.header.stamp = odomTime;
+    // odomData.pose.pose.orientation = geoQuat;
+    // odomData.pose.pose.position.x = vehicleX;
+    // odomData.pose.pose.position.y = vehicleY;
+    // odomData.pose.pose.position.z = vehicleZ;
+    // odomData.twist.twist.angular.x = 200.0 * (vehicleRoll - vehicleRecRoll);
+    // odomData.twist.twist.angular.y = 200.0 * (vehiclePitch - vehicleRecPitch);
+    // odomData.twist.twist.angular.z = vehicleYawRate;
+    // odomData.twist.twist.linear.x = vehicleSpeed;
+    // odomData.twist.twist.linear.z = 200.0 * (vehicleZ - vehicleRecZ);
+    // pubVehicleOdom->publish(odomData);
+
+    // publish 200Hz tf messages
+    odomTrans.setRotation(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w));
+    odomTrans.setOrigin(tf2::Vector3(vehicleX, vehicleY, vehicleZ));
+    // transformTfGeom = tf2::toMsg(odomTrans);
+    // // 这里的sensor其实就是base link
+    // transformTfGeom.child_frame_id = "sensor";
+    // transformTfGeom.header.stamp = odomTime;
+    // tfBroadcaster->sendTransform(transformTfGeom);
+
+    // publish 200Hz Gazebo model state messages (this is for Gazebo simulation)
+    // cameraState.pose.orientation = geoQuat;
+    // cameraState.pose.position.x = vehicleX;
+    // cameraState.pose.position.y = vehicleY;
+    // cameraState.pose.position.z = vehicleZ + cameraOffsetZ;
+    // request->state = cameraState;
+    // auto response = client->async_send_request(request);
+
+    // robotState.pose.orientation = geoQuat;
+    // robotState.pose.position.x = vehicleX;
+    // robotState.pose.position.y = vehicleY;
+    // robotState.pose.position.z = vehicleZ;
+    // request->state = robotState;
+    // response = client->async_send_request(request);
+
+    // quat_tf.setRPY(terrainRoll, terrainPitch, 0);
+    // tf2::convert(quat_tf, geoQuat);
+    // lidarState.pose.orientation = geoQuat;
+    // lidarState.pose.position.x = vehicleX;
+    // lidarState.pose.position.y = vehicleY;
+    // lidarState.pose.position.z = vehicleZ;
+    // request->state = lidarState;
+    // response = client->async_send_request(request);
+
+    status = rclcpp::ok();
+    rate.sleep();
+  }
+
+  return 0;
+}

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(terrain_analysis_ext)
+project(waypoint_example)
 
 # Default to C99
 if(NOT CMAKE_C_STANDARD)
@@ -28,16 +28,17 @@ find_package(message_filters REQUIRED)
 find_package(pcl_conversions REQUIRED)
 find_package(pcl_ros REQUIRED)
 
-add_executable(terrainAnalysisExt src/terrainAnalysisExt.cpp)
-ament_target_dependencies(terrainAnalysisExt rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
+add_executable(waypointExample src/waypointExample.cpp)
+ament_target_dependencies(waypointExample rclcpp std_msgs sensor_msgs nav_msgs geometry_msgs tf2 tf2_ros tf2_geometry_msgs message_filters pcl_ros pcl_conversions)
 
 install(TARGETS
-  terrainAnalysisExt
+  waypointExample
   DESTINATION lib/${PROJECT_NAME})
 
 install(
   DIRECTORY
   launch
+  data
   DESTINATION share/${PROJECT_NAME}
 )
 

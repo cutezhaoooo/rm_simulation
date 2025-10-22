@@ -69,7 +69,56 @@ def generate_launch_description():
   declare_verbose = DeclareLaunchArgument('verbose', default_value='false', description='')
   declare_world_name = DeclareLaunchArgument('world_name', default_value='garage', description='')
   
-  # TODO暂时将参数都注释掉 后面再补充
+  # lidar_xacro = os.path.join(get_package_share_directory('vehicle_simulator'), 'urdf', 'lidar.urdf.xacro')
+  # lidar_description = Command(['xacro',' ', lidar_xacro])
+  # start_lidar_state_publisher = Node(
+  #   package='robot_state_publisher',
+  #   executable='robot_state_publisher',
+  #   name='robot_state_publisher',
+  #   output='screen',
+  #   parameters=[{
+  #     'use_sim_time': use_sim_time,
+  #     'robot_description': lidar_description
+  #   }]
+  # )
+
+  # spawn_lidar = Node(
+  #   package='gazebo_ros', 
+  #   executable='spawn_entity.py',
+  #   arguments=[
+  #     '-entity', 'lidar',
+  #     '-topic', 'robot_description',
+  #   ],
+  #   output='screen',
+  # )
+
+  # robot_xacro = os.path.join(get_package_share_directory('vehicle_simulator'), 'urdf', 'robot.sdf')
+  # spawn_robot = Node(
+  #   package='gazebo_ros', 
+  #   executable='spawn_entity.py',
+  #   arguments=[
+  #     '-file', robot_xacro,
+  #     '-entity', 'robot'
+  #   ],
+  #   output='screen',
+  # )
+
+  # camera_xacro = os.path.join(get_package_share_directory('vehicle_simulator'), 'urdf', 'camera.urdf.xacro')
+  # spawn_camera = Node(
+  #   package='gazebo_ros', 
+  #   executable='spawn_entity.py',
+  #   arguments=[
+  #     '-file', camera_xacro,
+  #     '-entity', 'camera'
+  #     ],
+  #     output='screen'
+  # )
+
+  # start_gazebo = IncludeLaunchDescription(
+  #   PythonLaunchDescriptionSource(os.path.join(
+  #     get_package_share_directory('gazebo_ros'), 'launch', 'gazebo.launch.py'))
+  # )
+
   start_vehicle_simulator = Node(
     package='vehicle_simulator', 
     executable='vehicleSimulator',
@@ -97,7 +146,7 @@ def generate_launch_description():
         'smoothRateIncl': smoothRateIncl,
         'InclFittingThre': InclFittingThre,
         'maxIncl': maxIncl,
-        'use_sim_time': False
+        'use_sim_time': use_sim_time
       }
       ],
       output='screen'
@@ -140,8 +189,13 @@ def generate_launch_description():
   ld.add_action(declare_record)
   ld.add_action(declare_verbose)
   ld.add_action(declare_world_name)
-  ld.add_action(OpaqueFunction(function=declare_world_action, args=[world_name]))
-  
+  # ld.add_action(OpaqueFunction(function=declare_world_action, args=[world_name]))
+
+  # ld.add_action(start_gazebo)
+  # ld.add_action(start_lidar_state_publisher)
+  # ld.add_action(spawn_lidar)
+  # ld.add_action(spawn_robot)
+  # ld.add_action(spawn_camera)
   ld.add_action(delayed_start_vehicle_simulator)
 
   return ld

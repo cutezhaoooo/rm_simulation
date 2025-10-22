@@ -24,6 +24,9 @@ This repository contains a ROS 2-based simulation and mapping framework using FA
 
 确保已安装以下软件包：
 
+/livox/lidar/pointcloud 
+pointCloud2
+
 - ROS 2 (推荐 Humble)
 - PCL (Point Cloud Library)
 - FAST-LIO
