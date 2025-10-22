@@ -19,6 +19,7 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <geometry_msgs/msg/point_stamped.hpp>
 #include <geometry_msgs/msg/polygon_stamped.hpp>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 #include <sensor_msgs/msg/imu.h>
 
 #include "tf2/transform_datatypes.h"
@@ -36,6 +37,12 @@
 #include "message_filters/sync_policies/approximate_time.h"
 #include "rmw/types.h"
 #include "rmw/qos_profiles.h"
+
+#include <tf2_sensor_msgs/tf2_sensor_msgs.hpp>
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 
 using namespace std;
 
@@ -502,6 +509,13 @@ int main(int argc, char** argv)
   rclcpp::init(argc, argv);
   nh = rclcpp::Node::make_shared("localPlanner");
 
+  // 初始化tf
+  std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+  std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+  
+  tf_buffer_ = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
+  tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
   nh->declare_parameter<std::string>("pathFolder", pathFolder);
   nh->declare_parameter<double>("vehicleLength", vehicleLength);
   nh->declare_parameter<double>("vehicleWidth", vehicleWidth);
@@ -600,7 +614,7 @@ int main(int argc, char** argv)
 
   auto subCheckObstacle = nh->create_subscription<std_msgs::msg::Bool>("/check_obstacle", 5, checkObstacleHandler);
 
-  auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/path", 5);
+  auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/local_path", 5);
 
   auto pubplannerCloudCrop = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCrop",5);
 
@@ -645,6 +659,7 @@ int main(int argc, char** argv)
   #endif
   readPathList();
   readCorrespondences();
+
 
   RCLCPP_INFO(nh->get_logger(), "Initialization complete.");
 
@@ -951,9 +966,38 @@ int main(int argc, char** argv)
 
           sensor_msgs::msg::PointCloud2 freePaths2;
           pcl::toROSMsg(*freePaths, freePaths2);
-          freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-          freePaths2.header.frame_id = "map";
-          pubFreePaths->publish(freePaths2);
+          // freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
+          // freePaths2.header.frame_id = "map";
+          // pubFreePaths->publish(freePaths2);
+
+          try {
+              // 获取从base_link到map的变换
+              geometry_msgs::msg::TransformStamped transform;
+              transform = tf_buffer_->lookupTransform("map", "base_link", 
+                                                    freePaths2.header.stamp,
+                                                    rclcpp::Duration::from_seconds(0.1));
+              
+              // 转换点云坐标系
+              sensor_msgs::msg::PointCloud2 freePaths_map;
+              tf2::doTransform(freePaths2, freePaths_map, transform);
+              freePaths_map.header.frame_id = "map";
+              
+              pubFreePaths->publish(freePaths_map);
+          } catch (tf2::TransformException &ex) {
+              RCLCPP_WARN(nh->get_logger(), "TF转换失败: %s", ex.what());
+              // 可以选择发布原始数据或什么都不做
+          }
+
+          try
+          {
+            
+          }
+          catch(const std::exception& e)
+          {
+            std::cerr << e.what() << '\n';
+          }
+          
+
           #endif
         }
 
