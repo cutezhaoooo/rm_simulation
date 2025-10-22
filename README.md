@@ -76,8 +76,6 @@ ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
 
 ```bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
-
-ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/cmd_vel_chassis
 ```
 
 3. 建图完成后，调用服务保存地图：
