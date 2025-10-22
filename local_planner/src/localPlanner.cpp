@@ -145,8 +145,8 @@ void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
   vehicleRoll = roll;
   vehiclePitch = pitch;
   vehicleYaw = yaw;
-  vehicleX = odom->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
-  vehicleY = odom->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
+  vehicleX = odom->pose.pose.position.x;
+  vehicleY = odom->pose.pose.position.y;
   vehicleZ = odom->pose.pose.position.z;
 }
 
@@ -582,7 +582,7 @@ int main(int argc, char** argv)
   nh->get_parameter("goalX", goalX);
   nh->get_parameter("goalY", goalY);
 
-  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odometryHandler);
+  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry", 5, odometryHandler);
 
   auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
 
@@ -601,6 +601,9 @@ int main(int argc, char** argv)
   auto subCheckObstacle = nh->create_subscription<std_msgs::msg::Bool>("/check_obstacle", 5, checkObstacleHandler);
 
   auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/path", 5);
+
+  auto pubplannerCloudCrop = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCrop",5);
+
   nav_msgs::msg::Path path;
 
   #if PLOTPATHSET == 1
@@ -693,6 +696,7 @@ int main(int argc, char** argv)
         }
       }
 
+
       int boundaryCloudSize = boundaryCloud->points.size();
       for (int i = 0; i < boundaryCloudSize; i++) {
         point.x = ((boundaryCloud->points[i].x - vehicleX) * cosVehicleYaw 
@@ -722,6 +726,15 @@ int main(int argc, char** argv)
           plannerCloudCrop->push_back(point);
         }
       }
+
+      // 检查 plannerCloudCrop frame_id 同 terrainCloud
+      sensor_msgs::msg::PointCloud2 plannerCloudCropMsg;
+      pcl::toROSMsg(*plannerCloudCrop,plannerCloudCropMsg);
+      plannerCloudCropMsg.header.stamp = nh->get_clock()->now();
+      plannerCloudCropMsg.header.frame_id = "base_link";
+      pubplannerCloudCrop->publish(plannerCloudCropMsg);
+
+
 
       float pathRange = adjacentRange;
       if (pathRangeBySpeed) pathRange = adjacentRange * joySpeed;
@@ -889,7 +902,7 @@ int main(int argc, char** argv)
           }
 
           path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-          path.header.frame_id = "vehicle";
+          path.header.frame_id = "base_link";
           pubPath->publish(path);
 
           #if PLOTPATHSET == 1
@@ -935,7 +948,7 @@ int main(int argc, char** argv)
           sensor_msgs::msg::PointCloud2 freePaths2;
           pcl::toROSMsg(*freePaths, freePaths2);
           freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-          freePaths2.header.frame_id = "vehicle";
+          freePaths2.header.frame_id = "base_link";
           pubFreePaths->publish(freePaths2);
           #endif
         }
@@ -961,7 +974,7 @@ int main(int argc, char** argv)
         path.poses[0].pose.position.z = 0;
 
         path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-        path.header.frame_id = "vehicle";
+        path.header.frame_id = "base_link";
         pubPath->publish(path);
 
         #if PLOTPATHSET == 1
@@ -969,7 +982,7 @@ int main(int argc, char** argv)
         sensor_msgs::msg::PointCloud2 freePaths2;
         pcl::toROSMsg(*freePaths, freePaths2);
         freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-        freePaths2.header.frame_id = "vehicle";
+        freePaths2.header.frame_id = "base_link";
         pubFreePaths->publish(freePaths2);
         #endif
       }

@@ -75,6 +75,8 @@ ros2 launch fast_lio mapping.launch.py config_file:=mid360.yaml
 2. 使用键盘控制机器人运动（可选）：
 
 ```bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/cmd_vel_chassis
 ```
 

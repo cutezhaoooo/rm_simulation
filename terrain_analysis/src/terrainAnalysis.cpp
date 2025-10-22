@@ -157,6 +157,9 @@ void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laser
   pcl::fromROSMsg(*laserCloud2, *laserCloud);
 
   pcl::PointXYZI point;
+  // 这里point是map坐标系下面的
+  // vehicle是odom坐标系下面的
+  // TODO目前map与odom坐标系一致 后面考虑统一坐标系
   laserCloudCrop->clear();
   int laserCloudSize = laserCloud->points.size();
   for (int i = 0; i < laserCloudSize; i++) {
@@ -674,7 +677,7 @@ int main(int argc, char **argv) {
       sensor_msgs::msg::PointCloud2 terrainCloud2;
       pcl::toROSMsg(*terrainCloudElev, terrainCloud2);
       terrainCloud2.header.stamp = rclcpp::Time(static_cast<uint64_t>(laserCloudTime * 1e9));
-      terrainCloud2.header.frame_id = "base_link";
+      terrainCloud2.header.frame_id = "map";
       pubLaserCloud->publish(terrainCloud2);
     }
 
