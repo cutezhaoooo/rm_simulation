@@ -921,8 +921,34 @@ int main(int argc, char** argv)
           }
 
           path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-          path.header.frame_id = "base_link";
-          pubPath->publish(path);
+          // path.header.frame_id = "base_link";
+          // pubPath->publish(path);
+
+          try 
+          {
+            // 获取从base_link到map的变换
+            geometry_msgs::msg::TransformStamped transform;
+            transform = tf_buffer_->lookupTransform("map", "base_link", 
+                                                  rclcpp::Time(0),
+                                                  rclcpp::Duration::from_seconds(0.1));
+            
+            // 创建转换后的path
+            nav_msgs::msg::Path path_map;
+            path_map.header.stamp = path.header.stamp;
+            path_map.header.frame_id = "map";
+            
+            // 转换每个pose
+            for (const auto& pose_stamped : path.poses) {
+                geometry_msgs::msg::PoseStamped transformed_pose;
+                tf2::doTransform(pose_stamped, transformed_pose, transform);
+                path_map.poses.push_back(transformed_pose);
+            }
+            
+            pubPath->publish(path_map);
+          } catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(nh->get_logger(), "Path TF转换失败: %s", ex.what());
+            // 可以选择发布原始数据或什么都不做
+          }
 
           #if PLOTPATHSET == 1
           freePaths->clear();
