@@ -753,12 +753,16 @@ int main(int argc, char** argv)
           else if (joyDir < -90.0) joyDir = -90.0;
         }
       }
+      RCLCPP_INFO(nh->get_logger(),"joyDir :%.2f",joyDir);
+      RCLCPP_INFO(nh->get_logger(),"relativeGoalDis :%.2f",relativeGoalDis);
 
       bool pathFound = false;
       float defPathScale = pathScale;
       if (pathScaleBySpeed) pathScale = defPathScale * joySpeed;
       if (pathScale < minPathScale) pathScale = minPathScale;
 
+      // =================================================================
+      //                           设置路径
       while (pathScale >= minPathScale && pathRange >= minPathRange) {
         for (int i = 0; i < 36 * pathNum; i++) {
           clearPathList[i] = 0;
@@ -948,7 +952,7 @@ int main(int argc, char** argv)
           sensor_msgs::msg::PointCloud2 freePaths2;
           pcl::toROSMsg(*freePaths, freePaths2);
           freePaths2.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
-          freePaths2.header.frame_id = "base_link";
+          freePaths2.header.frame_id = "map";
           pubFreePaths->publish(freePaths2);
           #endif
         }
