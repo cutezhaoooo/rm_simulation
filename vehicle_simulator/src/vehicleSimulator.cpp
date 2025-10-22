@@ -223,7 +223,6 @@ int main(int argc, char** argv)
 
 
 
-
     rclcpp::Rate rate(200);
     bool status = rclcpp::ok();
     while (status)
