@@ -1,49 +1,68 @@
-#ifndef LQR_CONTROLLER
-#define LQR_CONTROLLER
+#ifndef LQR_CONTROLLER_HPP
+#define LQR_CONTROLLER_HPP
 
 #include "rclcpp/rclcpp.hpp"
 #include "nav_msgs/msg/path.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
+#include "geometry_msgs/msg/point_stamped.hpp"
+
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_broadcaster.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "tf2_ros/transform_listener.h"
 
 #include "eigen3/Eigen/Dense"
+#include <memory>
 
-namespace lqr
-{
-
-class lqr_controller
+class LqrController : public rclcpp::Node
 {
 public:
+    LqrController();
+    ~LqrController();
 
-    lqr_controller(double goal_dist_tol,double rotate_tol, double max_v, double min_v, double max_v_inc, 
-                 double max_w, double min_w, double max_w_inc, Eigen::Matrix3d Q, Eigen::Matrix2d R,
-                 int lqr_max_iter,double lqr_eps_iter, double lookahead_time, double min_lookahead_dist,
-                 double max_lookahead_dist);
-
-    ~lqr_controller();
-
+    void initializer();
+    void pathHandle(const nav_msgs::msg::Path::SharedPtr path);
 
 private:
 
-    double max_v_,min_v_,max_v_inc_;
-    double max_w_,min_w_,max_w_inc_;
 
-    Eigen::Matrix3d Q_;     // 状态误差矩阵
-    Eigen::Matrix2d R_;     // 控制误差矩阵
-
-    int lqr_max_iter_;   // maximum iteration for ricatti solution
-    double lqr_eps_iter_;    // iteration ending threshold
-
-    
+    // 参数
+    double max_v_, min_v_, max_v_inc_;
+    double max_w_, min_w_, max_w_inc_;
+    Eigen::Matrix3d Q_;
+    Eigen::Matrix2d R_;
+    int lqr_max_iter_;
+    double lqr_eps_iter_;
     std::string odom_frame_;
-
     double goal_dist_tol_;
     double rotate_tol_;
+    double lookahead_time_;
+    double min_lookahead_dist_;
+    double max_lookahead_dist_;
 
-    double lookahead_time_;      // lookahead time gain
-    double min_lookahead_dist_;  // minimum lookahead distance
-    double max_lookahead_dist_;  // maximum lookahead distance
+    // ROS2 订阅者和发布者
+    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr sub_path_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_odom_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr pub_cmd_vel_;
 
+    // 初始化tf2
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+    // 其他成员函数声明
+    void odomHandle(const nav_msgs::msg::Odometry::SharedPtr odom);
+    void controlTimerCallback();
+    
+    // 内部状态
+    nav_msgs::msg::Odometry current_odom_;
+    nav_msgs::msg::Path current_path_;
+    bool odom_initialized_;
+    bool path_initialized_;
+
+    // 定时器
+    rclcpp::TimerBase::SharedPtr control_timer_;
 };
-
-}
 
 #endif

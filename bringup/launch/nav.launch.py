@@ -63,7 +63,7 @@ def generate_launch_description():
     
     # 6. 启动 local_planner
     local_planner_launch = ExecuteProcess(
-        cmd=['ros2', 'launch', 'terrain_analysis', 'terrain_analysis.launch'],
+        cmd=['ros2', 'launch', 'local_planner', 'local_planner.launch'],
         output='screen'
     )
     ld.add_action(local_planner_launch)

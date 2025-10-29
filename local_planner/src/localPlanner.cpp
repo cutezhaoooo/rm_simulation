@@ -144,17 +144,19 @@ rclcpp::Node::SharedPtr nh;
 
 void odometryHandler(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 {
-  odomTime = rclcpp::Time(odom->header.stamp).seconds();
-  double roll, pitch, yaw;
-  geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
-  tf2::Matrix3x3(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w)).getRPY(roll, pitch, yaw);
 
-  vehicleRoll = roll;
-  vehiclePitch = pitch;
-  vehicleYaw = yaw;
-  vehicleX = odom->pose.pose.position.x;
-  vehicleY = odom->pose.pose.position.y;
-  vehicleZ = odom->pose.pose.position.z;
+    // 现在odom在map坐标系下面了
+    odomTime = rclcpp::Time(odom->header.stamp).seconds();
+    double roll, pitch, yaw;
+    geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
+    tf2::Matrix3x3(tf2::Quaternion(geoQuat.x, geoQuat.y, geoQuat.z, geoQuat.w)).getRPY(roll, pitch, yaw);
+
+    vehicleRoll = roll;
+    vehiclePitch = pitch;
+    vehicleYaw = yaw;
+    vehicleX = odom->pose.pose.position.x;
+    vehicleY = odom->pose.pose.position.y;
+    vehicleZ = odom->pose.pose.position.z;
 }
 
 void laserCloudHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr laserCloud2)
@@ -596,7 +598,7 @@ int main(int argc, char** argv)
   nh->get_parameter("goalX", goalX);
   nh->get_parameter("goalY", goalY);
 
-  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry", 5, odometryHandler);
+  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/odom", 5, odometryHandler);
 
   auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
 
