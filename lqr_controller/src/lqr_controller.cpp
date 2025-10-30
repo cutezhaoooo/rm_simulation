@@ -180,7 +180,7 @@ double LqrController::getLookAheadDistance(const geometry_msgs::msg::Twist &spee
     double vt = std::hypot(last_cmd_vel_.linear.x,last_cmd_vel_.linear.y); 
     // 可能是负数 不清楚有没有影响
     // double wt = last_cmd_vel_.angular.z;    
-    double lookahead_dist = fabs(vt) * lookahead_time_;
+    double lookahead_dist = fabs(vt) * lookahead_time_; 
     return std::clamp(lookahead_dist,min_lookahead_dist_,max_lookahead_dist_);
 }
 
@@ -236,79 +236,53 @@ geometry_msgs::msg::PoseStamped LqrController::getLookAheadPoint(
     const double & lookahead_dist,
     const nav_msgs::msg::Path & path)
 {
-    // Find the first pose which is at a distance greater than the lookahead distance
+    if (path.poses.empty()) return geometry_msgs::msg::PoseStamped();
+
+    // 当前车辆坐标
+    const double rx = current_odom_.pose.pose.position.x;
+    const double ry = current_odom_.pose.pose.position.y;
+
+    // 找到第一个距离车辆大于 lookahead_dist 的路径点
     auto goal_pose_it = std::find_if(
         path.poses.begin(), path.poses.end(), [&](const auto & ps) {
-        return std::hypot(ps.pose.position.x, ps.pose.position.y) >= lookahead_dist;
+            const double dx = ps.pose.position.x - rx;
+            const double dy = ps.pose.position.y - ry;
+            return std::hypot(dx, dy) >= lookahead_dist;
         });
 
-    geometry_msgs::msg::PoseStamped pose;  // pose to return
+    geometry_msgs::msg::PoseStamped pose;
 
-    // If no pose is far enough, take the last pose discretely
-    if (goal_pose_it == path.poses.end()) 
-    {
-        // 如果使用最后一个点作为前瞻点 
-        // 说明接近终点
-        pose = *(std::prev(path.poses.end()));  // dereference the last element pointer
-
-        // if heading needs to be computed from path,
-        // find the angle of the vector from second last to last pose
-        
-        // 计算最后一段路径的方向作为朝向
+    if (goal_pose_it == path.poses.end()) {
+        // 使用最后一个点
+        pose = path.poses.back();
         pose.pose.orientation = getOrientation(
-            // 倒数第二个点
-            std::prev(std::prev(path.poses.end()))->pose.position,
-            // 最后一个点
+            std::prev(path.poses.end(), 2)->pose.position,
             std::prev(path.poses.end())->pose.position);
-        
-        RCLCPP_INFO(this->get_logger(),"终点");
-
-        // if the first pose is ahead of the lookahead distance, take the first pose discretely
-    } else if (goal_pose_it == path.poses.begin()) 
-    {
-        // 路径的起点方向 路径起点很远
-        pose = *(goal_pose_it);  // dereference the first element pointer
-
-        // if heading needs to be computed from path,
-        // find the angle of the vector from first to second pose
+        RCLCPP_INFO(this->get_logger(), "终点");
+    } else if (goal_pose_it == path.poses.begin()) {
+        pose = *goal_pose_it;
         pose.pose.orientation = getOrientation(
-            path.poses.begin()->pose.position,
+            path.poses.front().pose.position,
             std::next(path.poses.begin())->pose.position);
-        
-        
-        RCLCPP_INFO(this->get_logger(),"起点");
-
-        // if interpolation is enabled:
-        // Find the point on the line segment between the two poses
-        // that is exactly the lookahead distance away from the robot pose (the origin)
-        // This can be found with a closed form for the intersection of a segment and a circle
-        // Because of the way we did the std::find_if, prev_pose is guaranteed to be
-        // inside the circle, and goal_pose is guaranteed to be outside the circle.
-    } else
-    {
-        // 如果使用插值方式
-        RCLCPP_INFO(this->get_logger(),"插值");
+        RCLCPP_INFO(this->get_logger(), "起点");
+    } else {
+        // 插值
+        RCLCPP_INFO(this->get_logger(), "插值");
         auto prev_pose_it = std::prev(goal_pose_it);
-
         pose.pose.position = circleSegmentIntersection(
-        prev_pose_it->pose.position,
-        goal_pose_it->pose.position, lookahead_dist);
+            prev_pose_it->pose.position,
+            goal_pose_it->pose.position,
+            lookahead_dist);
 
-        pose.header.frame_id = prev_pose_it->header.frame_id;
-        pose.header.stamp = goal_pose_it->header.stamp;
-
-        // if heading needs to be computed from path,
-        // find the angle of the vector from prev to goal pose
-        
+        pose.header = prev_pose_it->header;
         pose.pose.orientation = getOrientation(
-        prev_pose_it->pose.position, goal_pose_it->pose.position);
-
-        // use the headings from the prev and goal poses to interpolate
-        // a new heading for the lookahead point
-
+            prev_pose_it->pose.position,
+            goal_pose_it->pose.position);
     }
+
     return pose;
 }
+
 
 // Calculate distance between the 2 nodes.
 double LqrController::dist(const std::pair<double, double>& node1, const std::pair<double, double>& node2)
