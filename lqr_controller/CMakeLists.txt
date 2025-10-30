@@ -18,6 +18,7 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
+find_package(angles REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 # 包含头文件目录
@@ -26,31 +27,9 @@ include_directories(
   ${Eigen3_INCLUDE_DIRS}
 )
 
-# 首先创建库
-add_library(lqr_controller_lib
-  src/lqr_controller.cpp
-)
-
-# 设置库的属性
-target_include_directories(lqr_controller_lib PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-
-# 添加库的依赖
-ament_target_dependencies(lqr_controller_lib
-  rclcpp
-  geometry_msgs
-  nav_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  visualization_msgs
-  Eigen3
-)
-
-# 然后创建可执行文件并链接库
+# 创建可执行文件，包含所有源文件
 add_executable(lqr_controller_node 
+  src/lqr_controller.cpp
   src/lqr_controller_node.cpp
 )
 
@@ -60,7 +39,7 @@ target_include_directories(lqr_controller_node PUBLIC
   $<INSTALL_INTERFACE:include>
 )
 
-# 添加可执行文件的依赖
+# 添加依赖
 ament_target_dependencies(lqr_controller_node
   rclcpp
   geometry_msgs
@@ -69,20 +48,14 @@ ament_target_dependencies(lqr_controller_node
   tf2_ros
   tf2_geometry_msgs
   visualization_msgs
-)
-
-# 链接库
-target_link_libraries(lqr_controller_node
-  lqr_controller_lib
+  Eigen3
+  angles
 )
 
 # 安装目标
 install(TARGETS
-  lqr_controller_lib
   lqr_controller_node
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 # 安装头文件
@@ -104,9 +77,6 @@ ament_export_dependencies(
   visualization_msgs
   Eigen3
 )
-
-# 导出库
-ament_export_libraries(lqr_controller_lib)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
