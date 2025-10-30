@@ -11,9 +11,24 @@ find_package(rclcpp REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(PCL REQUIRED COMPONENTS io)
+find_package(pcl_conversions REQUIRED)
+
+include_directories(
+  ${PCL_INCLUDE_DIRS}
+)
 
 # add_executable(publish_body_to_livox src/publish_body_to_livox.cpp)
 add_executable(map_odom_baselink_livox src/map_odom_baselink_livox.cpp)
+add_executable(map_publisher_node src/map_publisher_node.cpp)
+
+
+ament_target_dependencies(map_publisher_node
+  rclcpp
+  sensor_msgs
+  pcl_conversions
+)
 
 ament_target_dependencies(map_odom_baselink_livox
   rclcpp
@@ -22,6 +37,9 @@ ament_target_dependencies(map_odom_baselink_livox
   tf2_geometry_msgs
 )
 
+target_link_libraries(map_publisher_node
+  ${PCL_LIBRARIES}
+)
 
 # target_link_libraries(publish_body_to_livox_tf
 #   ${tf2_ros_LIBRARIES}
@@ -30,6 +48,7 @@ ament_target_dependencies(map_odom_baselink_livox
 # 安装
 install(TARGETS
   map_odom_baselink_livox
+  map_publisher_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

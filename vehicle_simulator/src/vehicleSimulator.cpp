@@ -87,26 +87,45 @@ rclcpp::Node::SharedPtr nh;
 
 void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 {
-    // odomTime = rclcpp::Time(odom->header.stamp).seconds();
-    // double roll,pitch,yaw;
-    // geometry_msgs::msg::Quaternion geoQuat = odom->pose.pose.orientation;
-    // tf2::Matrix3x3(tf2::Quaternion(geoQuat.x,geoQuat.y,geoQuat.z,geoQuat.w)).getRPY(roll,pitch,yaw);
+    const std::string target_frame = "map";
+    const std::string source_frame = "odom";  // 原始 Odometry 所在坐标系
 
-    // vehicleRoll = roll;
-    // vehiclePitch = pitch;
-    // vehicleYaw = yaw;
+    try {
+        // 1️⃣ 查找 TF (map ← odom)
+        geometry_msgs::msg::TransformStamped tfStamped =
+            tfBuffer->lookupTransform(target_frame, source_frame, 
+                                      odom->header.stamp, rclcpp::Duration::from_seconds(0.1));
 
-    // // 都是根据odom的值来更新vehicleX的位置??
-    // vehicleX = odom->pose.pose.position.x - cos(yaw) * sensorOffsetX + sin(yaw) * sensorOffsetY;
-    // vehicleY = odom->pose.pose.position.y - sin(yaw) * sensorOffsetX - cos(yaw) * sensorOffsetY;
-    // // 打印 vehicleX 和 vehicleY的值
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX :%f , vehicleY :%f",vehicleX,vehicleY);
-    // vehicleZ = odom->pose.pose.position.z;
-    double vehicleX = odom->pose.pose.position.x;
-    double vehicleY = odom->pose.pose.position.y;
-    // double vehicleZ = odom->pose.pose.position.z;
-    // RCLCPP_INFO(nh->get_logger(),"vehicleX:%f , vehicleY :%f",vehicleX,vehicleY);
+        // 2️⃣ 将 odom.pose.pose 转换为 PoseStamped
+        geometry_msgs::msg::PoseStamped odom_pose;
+        odom_pose.header = odom->header;
+        odom_pose.header.frame_id = source_frame;
+        odom_pose.pose = odom->pose.pose;
+
+        geometry_msgs::msg::PoseStamped map_pose;
+        tf2::doTransform(odom_pose, map_pose, tfStamped);
+
+        // 3️⃣ 构造新的 Odometry 消息（frame_id 改为 map）
+        auto odom_in_map = std::make_shared<nav_msgs::msg::Odometry>();
+        odom_in_map->header = odom->header;
+        odom_in_map->header.frame_id = target_frame;
+        odom_in_map->child_frame_id = odom->child_frame_id;  // 一般是 base_link
+        odom_in_map->pose.pose = map_pose.pose;
+        odom_in_map->twist = odom->twist;
+
+        // 4️⃣ 发布（覆盖 /odom 或新话题）
+        static auto pubOdomInMap = nh->create_publisher<nav_msgs::msg::Odometry>("/odom", 5);
+        pubOdomInMap->publish(*odom_in_map);
+
+        RCLCPP_INFO_ONCE(nh->get_logger(), "✅ Publishing transformed odometry in map frame.");
+
+    } catch (tf2::TransformException &ex) {
+        RCLCPP_WARN_THROTTLE(nh->get_logger(), *nh->get_clock(), 2000, 
+            "TF transform from '%s' to '%s' failed: %s",
+            source_frame.c_str(), target_frame.c_str(), ex.what());
+    }
 }
+
 
 void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 {
