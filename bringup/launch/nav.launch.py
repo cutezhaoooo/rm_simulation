@@ -67,5 +67,13 @@ def generate_launch_description():
         output='screen'
     )
     ld.add_action(local_planner_launch)
+
+    lqr_controll_node = Node(
+        package='lqr_controller',
+        executable='lqr_controller_node',
+        name='lqr_controller_node',
+        output='screen'
+    )
+    ld.add_action(lqr_controll_node)
     
     return ld
