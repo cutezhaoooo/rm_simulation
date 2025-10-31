@@ -95,7 +95,7 @@ void LqrController::initializer()
 
     // odom是odom到base link的坐标变换 如果不在同一个坐标系下面就需要转换一下
     sub_odom_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "odom",
+        "/odom",
         10,
         std::bind(&LqrController::odomHandle, this, std::placeholders::_1));
 
@@ -591,7 +591,14 @@ void LqrController::controlTimerCallback()
         }        
     }
     
+    // 在发布之前添加四舍五入 限制两位小数
+    cmd_vel.linear.x = std::roundf(cmd_vel.linear.x * 100.0) / 100.0;
+    cmd_vel.angular.z = std::roundf(cmd_vel.angular.z * 100.0) / 100.0;
+
     pub_cmd_vel_->publish(cmd_vel);
+
+
+    RCLCPP_INFO(this->get_logger(),"linear x :%.2f, angular z :%.2f",cmd_vel.linear.x,cmd_vel.angular.z);
     
     last_cmd_vel_ = cmd_vel;
 

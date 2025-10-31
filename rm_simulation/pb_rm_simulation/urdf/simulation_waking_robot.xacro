@@ -14,7 +14,7 @@
   </xacro:macro>
 
   <!-- base_link to livox_frame -->
-  <xacro:arg name="xyz" default="0.12 0.0 0.175" />
+  <xacro:arg name="xyz" default="0.5 0.0 0.35" />
   <xacro:arg name="rpy" default="0 0 0" />
 
   <!-- <link name="dummy"/> -->
@@ -22,7 +22,7 @@
   <link name="base_link">
     <visual>
       <geometry>
-        <box size="0.2 .3 .1"/>
+        <box size="0.5 0.3 0.2"/>
       </geometry>
       <origin rpy="0 0 ${PI/2}" xyz="0 0 0.05"/>
       <material name="white">
@@ -31,7 +31,7 @@
     </visual>
     <collision>
       <geometry>
-        <box size="0.2 .3 0.1"/>
+        <box size="0.5 .3 0.2"/>
       </geometry>
       <origin rpy="0 0 ${PI/2}" xyz="0 0 0.05"/>
     </collision>
