@@ -28,16 +28,19 @@ include_directories(
 )
 
 # 创建可执行文件，包含所有源文件
+# add_executable(lqr_controller_node 
+#   src/lqr_controller.cpp
+#   src/lqr_controller_node.cpp
+# )
 add_executable(lqr_controller_node 
-  src/lqr_controller.cpp
   src/lqr_controller_node.cpp
 )
 
 # 设置可执行文件的属性
-target_include_directories(lqr_controller_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
+# target_include_directories(lqr_controller_node PUBLIC
+#   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+#   $<INSTALL_INTERFACE:include>
+# )
 
 # 添加依赖
 ament_target_dependencies(lqr_controller_node

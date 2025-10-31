@@ -242,6 +242,10 @@ geometry_msgs::msg::PoseStamped LqrController::getLookAheadPoint(
     const double rx = current_odom_.pose.pose.position.x;
     const double ry = current_odom_.pose.pose.position.y;
 
+    RCLCPP_INFO(this->get_logger(),"rx :%.2f,ry:%.2f",rx,ry);
+    // RCLCPP_INFO(this->get_logger(),"ps.x :%.2f,ps.y:%.2f",ps.pose.position.x,ry);
+
+
     // 找到第一个距离车辆大于 lookahead_dist 的路径点
     auto goal_pose_it = std::find_if(
         path.poses.begin(), path.poses.end(), [&](const auto & ps) {
@@ -530,6 +534,7 @@ void LqrController::controlTimerCallback()
     double vt = std::hypot(last_cmd_vel_.linear.x,last_cmd_vel_.linear.y);
     double wt = last_cmd_vel_.angular.z;
     double L = getLookAheadDistance(last_cmd_vel_);
+    RCLCPP_INFO(this->get_logger(),"look ahead distance :%.2f",L);
 
     // Cusp check
     // const double dist_to_cusp = 

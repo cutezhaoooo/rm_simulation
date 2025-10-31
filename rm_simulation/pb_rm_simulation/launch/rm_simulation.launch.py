@@ -17,6 +17,7 @@ from launch.actions.append_environment_variable import AppendEnvironmentVariable
 class WorldType:
     RMUC = 'RMUC'
     RMUL = 'RMUL'
+    TEST = "TEST"
 
 def get_world_config(world_type):
     world_configs = {
@@ -34,6 +35,13 @@ def get_world_config(world_type):
             'yaw': '0.0',
             'world_path': 'RMUL2024_world/RMUL2024_world.world'
             # 'world_path': 'RMUL2024_world/RMUL2024_world_dynamic_obstacles.world'
+        },
+        WorldType.TEST:{
+            'x': '0',
+            'y': '0',
+            'z': '0.08',
+            'yaw': '0.0',
+            'world_path': 'big.world'  # 确保 big.world 文件在 pb_rm_simulation/world/ 目录下
         }
     }
     return world_configs.get(world_type, None)
@@ -66,10 +74,9 @@ def generate_launch_description():
 
     declare_world_cmd = DeclareLaunchArgument(
         'world',
-        # NOTE:修改仿真世界
-        default_value=WorldType.RMUC,
-        # default_value=WorldType.RMUL,
-        description='Choose <RMUC> or <RMUL>'
+        # 使用 TEST 作为默认值
+        default_value=WorldType.TEST,
+        description='Choose <RMUC> or <RMUL> or <TEST>'
     )
 
     declare_rviz_config_file_cmd = DeclareLaunchArgument(
@@ -146,8 +153,10 @@ def generate_launch_description():
             ]
         )
 
+    # 创建所有世界的启动组
     bringup_RMUC_cmd_group = create_gazebo_launch_group(WorldType.RMUC)
     bringup_RMUL_cmd_group = create_gazebo_launch_group(WorldType.RMUL)
+    bringup_TEST_cmd_group = create_gazebo_launch_group(WorldType.TEST)
 
     # Create the launch description and populate
     ld = LaunchDescription()
@@ -162,8 +171,14 @@ def generate_launch_description():
     ld.add_action(gazebo_client_launch)
     ld.add_action(start_joint_state_publisher_cmd)
     ld.add_action(start_robot_state_publisher_cmd)
-    ld.add_action(bringup_RMUL_cmd_group) # type: ignore
-    ld.add_action(bringup_RMUC_cmd_group) # type: ignore
+    
+    # 添加所有世界的启动组
+    if bringup_RMUL_cmd_group:
+        ld.add_action(bringup_RMUL_cmd_group)
+    if bringup_RMUC_cmd_group:
+        ld.add_action(bringup_RMUC_cmd_group)
+    if bringup_TEST_cmd_group:
+        ld.add_action(bringup_TEST_cmd_group)
 
     # Uncomment this line if you want to start RViz
     ld.add_action(start_rviz_cmd)
