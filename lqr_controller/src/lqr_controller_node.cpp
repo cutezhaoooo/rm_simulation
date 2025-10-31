@@ -168,8 +168,8 @@ void LqrController::pathHandle(const nav_msgs::msg::Path::SharedPtr path)
 {
   current_path_ = *path;
   path_initialized_ = true;
-  RCLCPP_INFO(this->get_logger(), "Received path with %zu points, frame_id=%s", path->poses.size(),
-              path->header.frame_id.c_str());
+  // RCLCPP_INFO(this->get_logger(), "Received path with %zu points, frame_id=%s", path->poses.size(),
+  //             path->header.frame_id.c_str());
 }
 
 void LqrController::odomHandle(const nav_msgs::msg::Odometry::SharedPtr odom)
@@ -201,6 +201,7 @@ bool LqrController::circleSegmentIntersection(const geometry_msgs::msg::Point & 
                                               double r,
                                               geometry_msgs::msg::Point & out_p)
 {
+  // 计算线段与圆相交
   double x1 = p1.x, x2 = p2.x;
   double y1 = p1.y, y2 = p2.y;
 
@@ -261,7 +262,7 @@ geometry_msgs::msg::PoseStamped LqrController::getLookAheadPoint(
       pose.pose.orientation = getOrientation(std::prev(path.poses.end(), 2)->pose.position,
                                             std::prev(path.poses.end())->pose.position);
     }
-    RCLCPP_INFO(this->get_logger(), "终点");
+    // RCLCPP_INFO(this->get_logger(), "终点");
     return pose;
   } else if (goal_pose_it == path.poses.begin()) {
     pose = *goal_pose_it;
@@ -269,7 +270,7 @@ geometry_msgs::msg::PoseStamped LqrController::getLookAheadPoint(
       pose.pose.orientation = getOrientation(path.poses.front().pose.position,
                                             std::next(path.poses.begin())->pose.position);
     }
-    RCLCPP_INFO(this->get_logger(), "起点");
+    // RCLCPP_INFO(this->get_logger(), "起点");
     return pose;
   } else {
     auto prev_pose_it = std::prev(goal_pose_it);
@@ -279,14 +280,17 @@ geometry_msgs::msg::PoseStamped LqrController::getLookAheadPoint(
                                         lookahead_dist,
                                         inter);
     if (ok && std::isfinite(inter.x) && std::isfinite(inter.y)) {
+      // x y均为有限值
       pose.pose.position = inter;
       pose.header = prev_pose_it->header;
       pose.pose.orientation = getOrientation(prev_pose_it->pose.position, goal_pose_it->pose.position);
-      RCLCPP_INFO(this->get_logger(), "插值(交点)");
+      // RCLCPP_INFO(this->get_logger(), "插值(交点)");
     } else {
+      // 交点失败
       // fallback linear interpolation along segment
       double dx = goal_pose_it->pose.position.x - prev_pose_it->pose.position.x;
       double dy = goal_pose_it->pose.position.y - prev_pose_it->pose.position.y;
+
       double seg_len = std::hypot(dx, dy);
       if (seg_len < 1e-6) {
         pose = *prev_pose_it;
@@ -480,6 +484,8 @@ void LqrController::controlTimerCallback()
   double vt = std::hypot(last_cmd_vel_.linear.x, last_cmd_vel_.linear.y);
   double wt = last_cmd_vel_.angular.z;
   double L = getLookAheadDistance(last_cmd_vel_);
+
+  RCLCPP_INFO(this->get_logger(),"look ahead distance :%.2f",L);
 
   auto lookahead_point = getLookAheadPoint(L, current_path_);
 
