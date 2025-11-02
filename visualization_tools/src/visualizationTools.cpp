@@ -49,8 +49,8 @@ int exploredAreaDisplayInterval = 1;
 int exploredAreaDisplayCount = 0;
 
 pcl::PointCloud<pcl::PointXYZI>::Ptr laserCloud(new pcl::PointCloud<pcl::PointXYZI>());
-pcl::PointCloud<pcl::PointXYZ>::Ptr overallMapCloud(new pcl::PointCloud<pcl::PointXYZ>());
-pcl::PointCloud<pcl::PointXYZ>::Ptr overallMapCloudDwz(new pcl::PointCloud<pcl::PointXYZ>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr overallMapCloud(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr overallMapCloudDwz(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr exploredAreaCloud(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr exploredAreaCloud2(new pcl::PointCloud<pcl::PointXYZI>());
 pcl::PointCloud<pcl::PointXYZI>::Ptr exploredVolumeCloud(new pcl::PointCloud<pcl::PointXYZI>());
@@ -68,7 +68,7 @@ float vehicleYaw = 0;
 float vehicleX = 0, vehicleY = 0, vehicleZ = 0;
 float exploredVolume = 0, travelingDis = 0, runtime = 0, timeDuration = 0;
 
-pcl::VoxelGrid<pcl::PointXYZ> overallMapDwzFilter;
+pcl::VoxelGrid<pcl::PointXYZI> overallMapDwzFilter;
 pcl::VoxelGrid<pcl::PointXYZI> exploredAreaDwzFilter;
 pcl::VoxelGrid<pcl::PointXYZI> exploredVolumeDwzFilter;
 
@@ -271,9 +271,20 @@ int main(int argc, char** argv)
   exploredVolumeDwzFilter.setLeafSize(exploredVolumeVoxelSize, exploredVolumeVoxelSize, exploredVolumeVoxelSize);
 
   
-  if (pcl::io::loadPCDFile(mapFile, *overallMapCloud) == -1) {
-    RCLCPP_ERROR(nh->get_logger(), "Couldn't read pointcloud.pcd file: %s", mapFile.c_str());
+  // pcl::PointCloud<pcl::PointXYZI>::Ptr overallMapCloud(new pcl::PointCloud<pcl::PointXYZI>());
+
+  if (pcl::io::loadPCDFile<pcl::PointXYZI>(mapFile, *overallMapCloud) == -1) {
+    RCLCPP_ERROR(nh->get_logger(), "Couldn't read map file: %s", mapFile.c_str());
+    return -1;
   }
+
+  if (overallMapCloud->empty()) {
+    RCLCPP_ERROR(nh->get_logger(), "Loaded map cloud is empty!");
+    return -1;
+  }
+
+  RCLCPP_INFO(nh->get_logger(), "Loaded %zu points from map file.", overallMapCloud->size());
+
 
 
   overallMapCloudDwz->clear();
