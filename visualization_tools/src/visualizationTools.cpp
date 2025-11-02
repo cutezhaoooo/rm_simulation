@@ -248,7 +248,7 @@ int main(int argc, char** argv)
   metricFile.replace(metricFile.find("/install/"), 8, "/src");
   trajFile.replace(trajFile.find("/install/"), 8, "/src");
 
-  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, odometryHandler);
+  auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/odom", 5, odometryHandler);
 
   auto subLaserCloud = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/registered_scan", 5, laserCloudHandler);
 
@@ -270,10 +270,11 @@ int main(int argc, char** argv)
   exploredAreaDwzFilter.setLeafSize(exploredAreaVoxelSize, exploredAreaVoxelSize, exploredAreaVoxelSize);
   exploredVolumeDwzFilter.setLeafSize(exploredVolumeVoxelSize, exploredVolumeVoxelSize, exploredVolumeVoxelSize);
 
-  pcl::PLYReader ply_reader;
-  if (ply_reader.read(mapFile, *overallMapCloud) == -1) {
-    RCLCPP_INFO(nh->get_logger(), "Couldn't read pointcloud.ply file.");
+  
+  if (pcl::io::loadPCDFile(mapFile, *overallMapCloud) == -1) {
+    RCLCPP_ERROR(nh->get_logger(), "Couldn't read pointcloud.pcd file: %s", mapFile.c_str());
   }
+
 
   overallMapCloudDwz->clear();
   overallMapDwzFilter.setInputCloud(overallMapCloud);

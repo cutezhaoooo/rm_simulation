@@ -42,6 +42,7 @@ def get_world_config(world_type):
             'z': '0.08',
             'yaw': '0.0',
             'world_path': 'big.world'  # 确保 big.world 文件在 pb_rm_simulation/world/ 目录下
+
         }
     }
     return world_configs.get(world_type, None)
@@ -75,7 +76,7 @@ def generate_launch_description():
     declare_world_cmd = DeclareLaunchArgument(
         'world',
         # 使用 TEST 作为默认值
-        default_value=WorldType.TEST,
+        default_value=WorldType.RMUL,
         description='Choose <RMUC> or <RMUL> or <TEST>'
     )
 
