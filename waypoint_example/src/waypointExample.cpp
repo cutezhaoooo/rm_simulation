@@ -183,7 +183,8 @@ int main(int argc, char** argv)
   nh->get_parameter("sendSpeed", sendSpeed);
   nh->get_parameter("sendBoundary", sendBoundary);
   
-  auto subPose = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, poseHandler);
+  // auto subPose = nh->create_subscription<nav_msgs::msg::Odometry>("/state_estimation", 5, poseHandler);
+  auto subPose = nh->create_subscription<nav_msgs::msg::Odometry>("/odom", 5, poseHandler);
   
   auto pubWaypoint = nh->create_publisher<geometry_msgs::msg::PointStamped>("/way_point", 5);
   geometry_msgs::msg::PointStamped waypointMsgs;
