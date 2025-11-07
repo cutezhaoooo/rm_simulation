@@ -129,7 +129,7 @@ void LqrController::initializer()
   max_lookahead_dist_ = 3.0;
   max_angular_accel_ = 3.0;
   rotate_to_heading_angular_vel_ = 1.5;
-  rotate_to_heading_min_angle_ = 0.2;
+  rotate_to_heading_min_angle_ = 0.2; // 弧度 11.5度
 
   d_time = 0.1;
   timer_period_ = 0.1;
@@ -450,13 +450,34 @@ bool LqrController::shouldRotateToGoal(const geometry_msgs::msg::Pose & cur, con
 
 double LqrController::rotateToHeading(const double & angle_to_path, const geometry_msgs::msg::Twist & curr_speed)
 {
-  const double sign = angle_to_path > 0.0 ? 1.0 : -1.0;
-  double angular_vel = sign * rotate_to_heading_angular_vel_;
-
+  // 比例控制参数
+  const double kp = 2.0;  // 比例增益
+  
+  // 计算期望角速度（与角度误差成正比）
+  double desired_angular_vel = kp * angle_to_path;
+  
+  // 限制最大角速度
+  if (std::fabs(desired_angular_vel) > rotate_to_heading_angular_vel_) {
+    desired_angular_vel = std::copysign(rotate_to_heading_angular_vel_, desired_angular_vel);
+  }
+  
+  // 确保最小角速度（避免在很小角度时不动）
+  const double min_angular_vel = 0.1;  // 最小角速度阈值
+  if (std::fabs(desired_angular_vel) < min_angular_vel && std::fabs(angle_to_path) > 0.01) {
+    desired_angular_vel = std::copysign(min_angular_vel, desired_angular_vel);
+  }
+  
+  // 角加速度限制
   const double dt = d_time;
-  const double min_feasible_angular_speed = curr_speed.angular.z - max_angular_accel_ * dt;
-  const double max_feasible_angular_speed = curr_speed.angular.z + max_angular_accel_ * dt;
-  angular_vel = std::clamp(angular_vel, min_feasible_angular_speed, max_feasible_angular_speed);
+  const double max_angular_change = max_angular_accel_ * dt;
+  double angular_vel = curr_speed.angular.z;
+  
+  if (std::fabs(desired_angular_vel - angular_vel) > max_angular_change) {
+    angular_vel += std::copysign(max_angular_change, desired_angular_vel - angular_vel);
+  } else {
+    angular_vel = desired_angular_vel;
+  }
+  
   return angular_vel;
 }
 
@@ -531,6 +552,7 @@ void LqrController::controlTimerCallback()
   double theta = tf2::getYaw(current_odom_.pose.pose.orientation);
 
   // compute sign based on robot-local projection (front/back)
+  // 前瞻点距离
   double dx = lookahead_point.pose.position.x - current_odom_.pose.pose.position.x;
   double dy = lookahead_point.pose.position.y - current_odom_.pose.pose.position.y;
   double vx_local = std::cos(theta) * dx + std::sin(theta) * dy;

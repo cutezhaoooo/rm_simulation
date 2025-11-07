@@ -43,6 +43,9 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+
 
 using namespace std;
 
@@ -461,6 +464,7 @@ void readPathList()
 
     if (pathID >= 0 && pathID < pathNum && groupID >= 0 && groupID < groupNum) {
       pathList[pathID] = groupID;
+      // 这里返回的是车辆坐标系下面的角度
       endDirPathList[pathID] = 2.0 * atan2(endY, endX) * 180 / PI;
     }
   }
@@ -619,6 +623,8 @@ int main(int argc, char** argv)
   auto pubPath = nh->create_publisher<nav_msgs::msg::Path>("/local_path", 5);
 
   auto pubplannerCloudCrop = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/plannerCloudCrop",5);
+
+  auto pubmarker = nh->create_publisher<visualization_msgs::msg::MarkerArray>("marker",2);
 
   nav_msgs::msg::Path path;
 
@@ -859,8 +865,11 @@ int main(int argc, char** argv)
         if (minObsAngCW > 0) minObsAngCW = 0;
         if (minObsAngCCW < 0) minObsAngCCW = 0;
 
+        visualization_msgs::msg::MarkerArray markerArray;
+        markerArray.markers.clear();
         for (int i = 0; i < 36 * pathNum; i++) 
         {
+          // rotDir 000000 11111 ....   36
           int rotDir = int(i / pathNum);
           float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
           if (angDiff > 180.0) {
@@ -879,13 +888,46 @@ int main(int argc, char** argv)
             // 保底分
             if (penaltyScore < costScore) penaltyScore = costScore;
             // 当前目标方向与候选路径的实际方向之间的角度差 
-            float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
-            if (dirDiff > 360.0) {
-              dirDiff -= 360.0;
+            // 目标角度 - 车辆坐标系下面路径末端的角度 - 预计旋转的角度
+            // float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
+            // if (dirDiff > 360.0) {
+            //   dirDiff -= 360.0;
+            // }
+            // if (dirDiff > 180.0) {
+            //   dirDiff = 360.0 - dirDiff;
+            // }
+            float pathDir = endDirPathList[i % pathNum] + (10.0 * rotDir - 180.0);
+            float dirDiff = fabs(joyDir - pathDir);
+            if (dirDiff > 180.0) dirDiff = 360.0 - dirDiff;
+
+            // ========================= 添加可视化 ============================
+            if (rotDir % 5 == 0 && i % pathNum == 0) {  // ✅ 每隔5个方向显示一次
+              visualization_msgs::msg::Marker textMarker;
+              textMarker.header.frame_id = "base_link";
+              textMarker.header.stamp = nh->get_clock()->now();
+              textMarker.ns = "dir_diff_text";
+              textMarker.id = rotDir; // ✅ 用 rotDir 作为唯一 id
+              textMarker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
+              textMarker.action = visualization_msgs::msg::Marker::ADD;
+
+              // 在车辆前方3米处显示
+              textMarker.pose.position.x = cos(pathDir * M_PI / 180.0) * 3.0;
+              textMarker.pose.position.y = sin(pathDir * M_PI / 180.0) * 3.0;
+              textMarker.pose.position.z = 0.5;
+
+              textMarker.scale.z = 0.3;
+              textMarker.color.a = 1.0;
+              textMarker.color.r = 1.0;
+              textMarker.color.g = 1.0;
+              textMarker.color.b = 0.0;
+
+              char buf[16];
+              snprintf(buf, sizeof(buf), "%.1f", dirDiff);
+              textMarker.text = buf;
+
+              markerArray.markers.push_back(textMarker);
             }
-            if (dirDiff > 180.0) {
-              dirDiff = 360.0 - dirDiff;
-            }
+
             // TODO 验证角度是否正确
 
             float rotDirW;          //9是y轴负方向，27是y轴正方向， rotDirW 代表了该条路径的方向与当前车辆朝向的角度差
@@ -911,22 +953,66 @@ int main(int argc, char** argv)
 
           }
         }
+        // 可视化
+        for (auto &m : markerArray.markers) 
+        {
+          m.lifetime = rclcpp::Duration::from_seconds(1);
+        }
+        pubmarker->publish(markerArray);
 
-        float maxScore = 0;
+
+
+        // float maxScore = 0;
+        // int selectedGroupID = -1;
+        // 在得分相同时 选取距离目标点最近的路径
+        // for (int i = 0; i < 36 * groupNum; i++) {
+        //   int rotDir = int(i / groupNum); // 路径方向
+        //   float rotAng = (10.0 * rotDir - 180.0) * PI / 180;  // x轴负半轴开始计算角度
+        //   float rotDeg = 10.0 * rotDir;
+        //   if (rotDeg > 180.0) rotDeg -= 360.0;
+        //   if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
+        //       (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+        //     // 只取第一个最大的得分
+        //     // TODO 检查是否
+        //     maxScore = clearPathPerGroupScore[i];
+        //     selectedGroupID = i;
+        //   }
+        // }
+
+        float maxScore = 0.0f;
         int selectedGroupID = -1;
+        bool hasSameScore = false;
+
         for (int i = 0; i < 36 * groupNum; i++) {
-          int rotDir = int(i / groupNum); // 路径方向
-          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;  // x轴负半轴开始计算角度
+          int rotDir = int(i / groupNum);
+          float rotAng = (10.0 * rotDir - 180.0) * PI / 180.0;
           float rotDeg = 10.0 * rotDir;
           if (rotDeg > 180.0) rotDeg -= 360.0;
-          if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
-              (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
-            // 只取第一个最大的得分
-            // TODO 检查是否
-            maxScore = clearPathPerGroupScore[i];
-            selectedGroupID = i;
+
+          float score = clearPathPerGroupScore[i];
+          bool valid = ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) ||
+                        (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) ||
+                        !checkRotObstacle);
+
+          if (valid) {
+            if (fabs(score - maxScore) < 1e-6 && score > 0.0f) {
+              hasSameScore = true;
+            }
+
+            if (score > maxScore) {
+              maxScore = score;
+              selectedGroupID = i;
+            }
           }
         }
+
+        if (hasSameScore) {
+          RCLCPP_WARN(nh->get_logger(),
+                      "Multiple paths share the same max score = %.3f", maxScore);
+        }
+
+
+
 
         if (selectedGroupID >= 0) {
           // 路径方向
@@ -952,6 +1038,7 @@ int main(int argc, char** argv)
               break;
             }
           }
+          // RCLCPP_INFO(nh->get_logger(),"pathRange / pathScale :%.2f, relativeGoalDis / pathScale :%.2f",pathRange/pathScale,relativeGoalDis / pathScale);
 
           path.header.stamp = rclcpp::Time(static_cast<uint64_t>(odomTime * 1e9));
           // path.header.frame_id = "base_link";

@@ -74,6 +74,6 @@ def generate_launch_description():
         name='lqr_controller_node',
         output='screen'
     )
-    ld.add_action(lqr_controll_node)
+    # ld.add_action(lqr_controll_node)
     
     return ld
