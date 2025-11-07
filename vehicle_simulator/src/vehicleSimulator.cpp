@@ -129,11 +129,9 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 
 void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 {
-    // 确认输入坐标系
-    std::string source_frame = scanIn->header.frame_id;
+    std::string source_frame = scanIn->header.frame_id;  // 应该是 camera_init
     const std::string target_frame = "map";
 
-    // 打印一次 frame id
     static bool printed = false;
     if (!printed)
     {
@@ -141,7 +139,6 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
         printed = true;
     }
 
-    // 转为 PCL 并修复强度
     pcl::fromROSMsg(*scanIn, *scanRawData);
     pcl::removeNaNFromPointCloud(*scanRawData, *scanRawData, scanInd);
 
@@ -160,11 +157,9 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
     sensor_msgs::msg::PointCloud2 scanMsg;
     pcl::toROSMsg(*scanData, scanMsg);
     scanMsg.header = scanIn->header;
-
-    // 取点云时间戳
     rclcpp::Time timestamp = scanIn->header.stamp;
 
-
+    // 检查 use_sim_time
     bool use_sim_time = nh->get_parameter("use_sim_time").as_bool();
     if (use_sim_time)
     {
@@ -172,45 +167,37 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
         nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
     }
 
-
-    // ✅ 尝试等待 TF（最多 0.5 秒）
-    if (!tfBuffer->canTransform(target_frame, source_frame, rclcpp::Time(0)))
+    // 确认 TF 可用
+    if (!tfBuffer->canTransform("map", "odom", rclcpp::Time(0)))
     {
         RCLCPP_WARN(nh->get_logger(),
-                    "❌ Unable to transform from '%s' to '%s' at time %.3f (no TF available)",
-                    source_frame.c_str(), target_frame.c_str(),
+                    "❌ No TF from map to odom at time %.3f",
                     timestamp.seconds());
         return;
     }
 
     try
     {
+        // 1. 获取 map->odom
+        geometry_msgs::msg::TransformStamped tfMapToOdom =
+            tfBuffer->lookupTransform("map", "odom", nh->get_clock()->now(), rclcpp::Duration::from_seconds(0.1));
+
+        // 2. 反转得到 odom->map（也即 camera_init->map）
+        geometry_msgs::msg::TransformStamped tfOdomToMap;
+        tfOdomToMap.header = tfMapToOdom.header;
+        tfOdomToMap.header.frame_id = "odom";
+        tfOdomToMap.child_frame_id = "map";
+
+        tf2::Transform tf;
+        tf2::fromMsg(tfMapToOdom.transform, tf);
+        tf = tf.inverse();
+        tfOdomToMap.transform = tf2::toMsg(tf);
+
+        // 3. 执行变换
         sensor_msgs::msg::PointCloud2 scanOut;
+        tf2::doTransform(scanMsg, scanOut, tfOdomToMap);
 
-        // ✅ 建议使用 lookupTransform + tf2::doTransform，而不是 pcl_ros::transformPointCloud
-        // rclcpp::Time now = nh->get_clock()->now();
-        // auto t = rclcpp::Clock().now();   
-        // RCLCPP_INFO(nh->get_logger(), "[rclcpp::Clock().now()] sec:%lf nano:%ld", t.seconds(), t.nanoseconds());
-
-        // std::chrono::steady_clock::time_point td = std::chrono::steady_clock::now(); 
-        // std::chrono::steady_clock::duration dtn = td.time_since_epoch();
-        // double secs = dtn.count() * std::chrono::steady_clock::period::num / std::chrono::steady_clock::period::den;
-        // RCLCPP_INFO(nh->get_logger(), "[std::chrono::steady_clock::now()] sec:%lf", secs);
-        
-        // auto t2 = nh->get_clock()->now();
-        // RCLCPP_INFO(nh->get_logger(), "[get_clock()->now()] sec:%lf nano:%ld", t2.seconds(), t2.nanoseconds());
-
-        // auto t3 = nh->now();
-        // RCLCPP_INFO(nh->get_logger(), "[this->now()] sec:%lf nano:%ld", t3.seconds(), t3.nanoseconds());
-
-
-        geometry_msgs::msg::TransformStamped tfStamped =
-            tfBuffer->lookupTransform(target_frame, source_frame, nh->get_clock()->now(), rclcpp::Duration::from_seconds(0.1));
-
-
-
-        tf2::doTransform(scanMsg, scanOut, tfStamped);
-
+        // 4. 发布结果
         scanOut.header.stamp = timestamp;
         scanOut.header.frame_id = target_frame;
         pubScanPointer->publish(scanOut);
@@ -220,6 +207,7 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
         RCLCPP_ERROR(nh->get_logger(), "Transform failed: %s", ex.what());
     }
 }
+
 
 
 
@@ -234,7 +222,9 @@ int main(int argc, char** argv)
     tfBuffer = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
     tfListener = std::make_shared<tf2_ros::TransformListener>(*tfBuffer);
 
-    auto subScan = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/livox/lidar/pointcloud",2,scanHandler);
+    // auto subScan = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/livox/lidar/pointcloud",2,scanHandler);
+    // 订阅fastlio处理后的点云   cloud_registered 
+    auto subScan = nh->create_subscription<sensor_msgs::msg::PointCloud2>("/cloud_registered",2,scanHandler);
 
     pubScanPointer = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/registered_scan",2);
 

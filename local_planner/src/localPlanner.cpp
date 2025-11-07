@@ -781,6 +781,7 @@ int main(int argc, char** argv)
       // =================================================================
       //                           设置路径
       while (pathScale >= minPathScale && pathRange >= minPathRange) {
+        // 清空评分器
         for (int i = 0; i < 36 * pathNum; i++) {
           clearPathList[i] = 0;
           pathPenaltyList[i] = 0;
@@ -794,13 +795,17 @@ int main(int argc, char** argv)
         float diameter = sqrt(vehicleLength / 2.0 * vehicleLength / 2.0 + vehicleWidth / 2.0 * vehicleWidth / 2.0);
         float angOffset = atan2(vehicleWidth, vehicleLength) * 180.0 / PI;
         int plannerCloudCropSize = plannerCloudCrop->points.size();
-        for (int i = 0; i < plannerCloudCropSize; i++) {
+        for (int i = 0; i < plannerCloudCropSize; i++) 
+        {
+          // 被缩放了 launch文件中是1.25
           float x = plannerCloudCrop->points[i].x / pathScale;
           float y = plannerCloudCrop->points[i].y / pathScale;
           float h = plannerCloudCrop->points[i].intensity;
           float dis = sqrt(x * x + y * y);
 
-          if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) {
+          // 判断条件：1.小于路径宽度（点云在车辆检测范围内）2.代检测点到车辆距离dis小于车到目标点距离（离目标太远无意义） 3.启动障碍物检测的点
+          if (dis < pathRange / pathScale && (dis <= (relativeGoalDis + goalClearRange) / pathScale || !pathCropByGoal) && checkObstacle) 
+          {
             for (int rotDir = 0; rotDir < 36; rotDir++) {
               float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
               float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
@@ -827,6 +832,7 @@ int main(int argc, char** argv)
                   if (h > obstacleHeightThre || !useTerrainAnalysis) {
                     clearPathList[pathNum * rotDir + correspondences[ind][j]]++;
                   } else {
+                    // 增加路径的惩罚
                     if (pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] < h && h > groundHeightThre) {
                       pathPenaltyList[pathNum * rotDir + correspondences[ind][j]] = h;
                     }
@@ -836,6 +842,7 @@ int main(int argc, char** argv)
             }
           }
 
+          // 检查障碍物是否会阻止车辆绕中心旋转
           if (dis < diameter / pathScale && (fabs(x) > vehicleLength / pathScale / 2.0 || fabs(y) > vehicleWidth / pathScale / 2.0) && 
               (h > obstacleHeightThre || !useTerrainAnalysis) && checkRotObstacle) {
             float angObs = atan2(y, x) * 180.0 / PI;
@@ -852,7 +859,8 @@ int main(int argc, char** argv)
         if (minObsAngCW > 0) minObsAngCW = 0;
         if (minObsAngCCW < 0) minObsAngCCW = 0;
 
-        for (int i = 0; i < 36 * pathNum; i++) {
+        for (int i = 0; i < 36 * pathNum; i++) 
+        {
           int rotDir = int(i / pathNum);
           float angDiff = fabs(joyDir - (10.0 * rotDir - 180.0));
           if (angDiff > 180.0) {
@@ -862,11 +870,15 @@ int main(int argc, char** argv)
               ((10.0 * rotDir > dirThre && 360.0 - 10.0 * rotDir > dirThre) && fabs(joyDir) > 90.0 && dirToVehicle)) {
             continue;
           }
-
-          if (clearPathList[i] < pointPerPathThre) {
+          
+          // 障碍物比较小的路径通过
+          if (clearPathList[i] < pointPerPathThre) 
+          {
+            // 得分 1-惩罚项
             float penaltyScore = 1.0 - pathPenaltyList[i] / costHeightThre;
+            // 保底分
             if (penaltyScore < costScore) penaltyScore = costScore;
-
+            // 当前目标方向与候选路径的实际方向之间的角度差 
             float dirDiff = fabs(joyDir - endDirPathList[i % pathNum] - (10.0 * rotDir - 180.0));
             if (dirDiff > 360.0) {
               dirDiff -= 360.0;
@@ -874,33 +886,52 @@ int main(int argc, char** argv)
             if (dirDiff > 180.0) {
               dirDiff = 360.0 - dirDiff;
             }
+            // TODO 验证角度是否正确
 
-            float rotDirW;
+            float rotDirW;          //9是y轴负方向，27是y轴正方向， rotDirW 代表了该条路径的方向与当前车辆朝向的角度差
             if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
             else rotDirW = fabs(fabs(rotDir - 27) + 1);
+
+            // (1 - 四次根号(权重系数 * 路径终点与目标点之间的角度差值)) 路径的方向与当前车辆朝向（车辆y轴=yaw角）的角度差  penaltyScore 路径上的障碍给出的惩罚得分 angDiff
             float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
             if (score > 0) {
               clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;
             }
+
+            // float rotDirW;
+            // if (rotDir < 18) rotDirW = fabs(fabs(rotDir - 9) + 1);
+            // else rotDirW = fabs(fabs(rotDir - 27) + 1);
+            // //该目标函数考虑机器人的转角和障碍物高度
+            // float score = (1 - sqrt(sqrt(dirWeight * dirDiff))) * rotDirW * rotDirW * rotDirW * rotDirW * penaltyScore;
+            // if (score > 0) {
+            //   //将所有path_id下的分数加到对应path_id下的groupid中，用于选择对应rotdir的groupid（确定第一级路径）
+            //   //定位到特定路径组groupid，groupNum * rotDir是该方向上的groupid起始序号，pathList[i % pathNum]]0-343该条路径对应的groupid（0-7）中的一个
+            //   clearPathPerGroupScore[groupNum * rotDir + pathList[i % pathNum]] += score;//i % pathNum=(取余0-343)对应path_id序号,pathList获得对应path_id的第一级groupid
+            // }
+
           }
         }
 
         float maxScore = 0;
         int selectedGroupID = -1;
         for (int i = 0; i < 36 * groupNum; i++) {
-          int rotDir = int(i / groupNum);
-          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
+          int rotDir = int(i / groupNum); // 路径方向
+          float rotAng = (10.0 * rotDir - 180.0) * PI / 180;  // x轴负半轴开始计算角度
           float rotDeg = 10.0 * rotDir;
           if (rotDeg > 180.0) rotDeg -= 360.0;
           if (maxScore < clearPathPerGroupScore[i] && ((rotAng * 180.0 / PI > minObsAngCW && rotAng * 180.0 / PI < minObsAngCCW) || 
               (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) || !checkRotObstacle)) {
+            // 只取第一个最大的得分
+            // TODO 检查是否
             maxScore = clearPathPerGroupScore[i];
             selectedGroupID = i;
           }
         }
 
         if (selectedGroupID >= 0) {
+          // 路径方向
           int rotDir = int(selectedGroupID / groupNum);
+          // 路径朝向起始角度
           float rotAng = (10.0 * rotDir - 180.0) * PI / 180;
 
           selectedGroupID = selectedGroupID % groupNum;
