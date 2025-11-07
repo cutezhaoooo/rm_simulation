@@ -493,6 +493,29 @@ bool LqrController::shouldRotateToPath(const geometry_msgs::msg::PoseStamped & t
   return std::abs(angle_to_path) > rotate_to_heading_min_angle_;
 }
 
+// 计算路径前段的曲率
+double computePathFrontHeading(const nav_msgs::msg::Path& path, int num_points = 5)
+{
+  if (path.poses.size() < 2) return tf2::getYaw(path.poses.front().pose.orientation);
+
+  int n = std::min((int)path.poses.size() - 1, num_points);
+  double sum_yaw = 0.0;
+  int count = 0;
+
+  for (int i = 0; i < n; ++i)
+  {
+    const auto& p1 = path.poses[i].pose.position;
+    const auto& p2 = path.poses[i + 1].pose.position;
+    double yaw = std::atan2(p2.y - p1.y, p2.x - p1.x);
+    sum_yaw += yaw;
+    count++;
+  }
+
+  if (count == 0) return tf2::getYaw(path.poses.front().pose.orientation);
+  return sum_yaw / count;
+}
+
+
 void LqrController::controlTimerCallback()
 {
   if (!odom_initialized_ || !path_initialized_) {
@@ -572,6 +595,10 @@ void LqrController::controlTimerCallback()
     double rel_x = dx * std::cos(-theta) - dy * std::sin(-theta);
     double rel_y = dx * std::sin(-theta) + dy * std::cos(-theta);
     double angle_to_path = std::atan2(rel_y, rel_x);
+
+    // 修改为前段的路径的曲率
+    // double path_heading = computePathFrontHeading(current_path_);
+    // double angle_to_path = regularizeAngle(path_heading - theta);
 
     if (std::fabs(angle_to_path) > rotate_to_heading_min_angle_) {
       // rotate in place toward path heading
