@@ -130,7 +130,7 @@ void odometryHandle(const nav_msgs::msg::Odometry::ConstSharedPtr odom)
 void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 {
     std::string source_frame = scanIn->header.frame_id;  // 应该是 camera_init
-    const std::string target_frame = "map";
+    const std::string target_frame = "";
 
     static bool printed = false;
     if (!printed)
@@ -199,8 +199,9 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 
         // 4. 发布结果
         scanOut.header.stamp = timestamp;
-        scanOut.header.frame_id = target_frame;
+        scanOut.header.frame_id = "map";   // 必须设置！
         pubScanPointer->publish(scanOut);
+
     }
     catch (tf2::TransformException &ex)
     {

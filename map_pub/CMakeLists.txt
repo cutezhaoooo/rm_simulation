@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(publish_body_to_livox_tf)
+project(map_pub)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -8,58 +8,37 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(PCL REQUIRED COMPONENTS io)
 find_package(pcl_conversions REQUIRED)
+find_package(PCL REQUIRED)
 
-include_directories(
-  ${PCL_INCLUDE_DIRS}
-)
+# 添加可执行文件
+add_executable(map_pub src/map_pub.cpp)
 
-# add_executable(publish_body_to_livox src/publish_body_to_livox.cpp)
-add_executable(map_odom_baselink_livox src/map_odom_baselink_livox.cpp)
-add_executable(map_publisher_node src/map_publisher_node.cpp)
-add_executable(map_odom_relocator src/map_odom_relocator.cpp)
-
-
-ament_target_dependencies(map_publisher_node
+# 添加依赖
+ament_target_dependencies(map_pub
   rclcpp
   sensor_msgs
   pcl_conversions
 )
 
-ament_target_dependencies(map_odom_baselink_livox
-  rclcpp
-  tf2_ros
-  geometry_msgs
-  tf2_geometry_msgs
-)
-
-ament_target_dependencies(map_odom_relocator
-  rclcpp
-  tf2_ros
-  geometry_msgs
-  tf2_geometry_msgs
-)
-
-target_link_libraries(map_publisher_node
-  ${PCL_LIBRARIES}
-)
-
-# target_link_libraries(publish_body_to_livox_tf
-#   ${tf2_ros_LIBRARIES}
-# )
+# 链接PCL库
+target_link_libraries(map_pub ${PCL_LIBRARIES})
 
 # 安装
 install(TARGETS
-  map_odom_baselink_livox
-  map_publisher_node
-  map_odom_relocator
+  map_pub
   DESTINATION lib/${PROJECT_NAME}
 )
+
+# 导出依赖
+# ament_export_dependencies(
+#   rclcpp
+#   sensor_msgs
+#   pcl_conversions
+# )
+
+# ament_package()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)

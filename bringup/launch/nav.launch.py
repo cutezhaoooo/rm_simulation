@@ -66,7 +66,7 @@ def generate_launch_description():
         cmd=['ros2', 'launch', 'local_planner', 'local_planner.launch'],
         output='screen'
     )
-    ld.add_action(local_planner_launch)
+    # ld.add_action(local_planner_launch)
 
     lqr_controll_node = Node(
         package='lqr_controller',

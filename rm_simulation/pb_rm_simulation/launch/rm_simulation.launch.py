@@ -76,8 +76,8 @@ def generate_launch_description():
     declare_world_cmd = DeclareLaunchArgument(
         'world',
         # 使用 TEST 作为默认值
-        # default_value=WorldType.RMUL,
-        default_value=WorldType.TEST,
+        default_value=WorldType.RMUL,
+        # default_value=WorldType.TEST,
         description='Choose <RMUC> or <RMUL> or <TEST>'
     )
 

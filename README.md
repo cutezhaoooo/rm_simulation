@@ -43,3 +43,5 @@ ros2 launch bringup nav.launch.py
 ```bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
+
+ros2 service call /trigger_service std_srvs/srv/SetBool "{data: true}" 

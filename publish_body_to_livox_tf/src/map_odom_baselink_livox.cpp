@@ -16,11 +16,12 @@ public:
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
         static_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
-        this->set_parameter(rclcpp::Parameter("use_sim_time", false));
+        this->set_parameter(rclcpp::Parameter("use_sim_time", true));
 
         // 发布 map->odom 静态变换（恒等）
         geometry_msgs::msg::TransformStamped static_tf;
-        static_tf.header.stamp = this->now();
+        // static_tf.header.stamp = this->now();
+        static_tf.header.stamp = rclcpp::Time(0);
         static_tf.header.frame_id = "map";
         static_tf.child_frame_id = "odom";
         static_tf.transform.translation.x = 0.0;
@@ -45,6 +46,7 @@ private:
 
         try
         {
+            // 使用最近的时间（tf2::TimePointZero）
             camera_to_body = tf_buffer_.lookupTransform("camera_init", "body", tf2::TimePointZero);
             base_to_livox = tf_buffer_.lookupTransform("base_link", "livox_frame", tf2::TimePointZero);
         }
@@ -53,6 +55,9 @@ private:
             RCLCPP_WARN(this->get_logger(), "TF lookup failed: %s", ex.what());
             return;
         }
+
+        // 使用接收到的TF的时间戳，而不是this->now()
+        rclcpp::Time tf_time = rclcpp::Time(camera_to_body.header.stamp);
 
         // 转换为 tf2 类型便于计算
         tf2::Transform T_camera_body, T_base_livox;
@@ -63,9 +68,9 @@ private:
         tf2::Transform T_livox_base = T_base_livox.inverse();
         tf2::Transform T_odom_base = T_camera_body * T_livox_base;
 
-        // 发布 odom->base_link
+        // 发布 odom->base_link，使用TF的时间戳
         geometry_msgs::msg::TransformStamped odom_to_base;
-        odom_to_base.header.stamp = this->now();
+        odom_to_base.header.stamp = camera_to_body.header.stamp;  // 关键：使用TF的时间戳
         odom_to_base.header.frame_id = "odom";
         odom_to_base.child_frame_id = "base_link";
         odom_to_base.transform = tf2::toMsg(T_odom_base);
