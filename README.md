@@ -45,3 +45,8 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
 ros2 service call /trigger_service std_srvs/srv/SetBool "{data: true}" 
+
+重定位
+ros2 launch fast_lio localization_mid360.launch.py     map:=path/test.pcd     use_sim_time:=true
+然后通过rviz2的 2D pose Estimate发布估计位置
+观察 /global_map_viz与 /cur_scan_in_map关系是否正确即可
