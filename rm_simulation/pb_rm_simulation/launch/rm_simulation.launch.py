@@ -30,7 +30,8 @@ def get_world_config(world_type):
         },
         WorldType.RMUL: {
             'x': '4.3',
-            'y': '3.35',
+            # 'y': '3.35',
+            'y': '5.0',
             'z': '1.16',
             'yaw': '0.0',
             'world_path': 'RMUL2024_world/RMUL2024_world.world'

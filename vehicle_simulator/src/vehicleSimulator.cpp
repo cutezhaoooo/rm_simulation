@@ -180,7 +180,7 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
     {
         // 1. 获取 map->odom
         geometry_msgs::msg::TransformStamped tfMapToOdom =
-            tfBuffer->lookupTransform("map", "odom", nh->get_clock()->now(), rclcpp::Duration::from_seconds(0.1));
+            tfBuffer->lookupTransform("map", "odom", rclcpp::Time(0), rclcpp::Duration::from_seconds(0.1));
 
         // 2. 反转得到 odom->map（也即 camera_init->map）
         geometry_msgs::msg::TransformStamped tfOdomToMap;
@@ -211,13 +211,12 @@ void scanHandler(const sensor_msgs::msg::PointCloud2::ConstSharedPtr scanIn)
 
 
 
-
 int main(int argc, char** argv)
 {
     rclcpp::init(argc,argv);
     nh = rclcpp::Node::make_shared("vehicleSimulator");
 
-    nh->set_parameter(rclcpp::Parameter("use_sim_time", false));
+    nh->set_parameter(rclcpp::Parameter("use_sim_time", true));
 
     // 初始化 TF Buffer 和 Listener
     tfBuffer = std::make_shared<tf2_ros::Buffer>(nh->get_clock());
@@ -230,6 +229,7 @@ int main(int argc, char** argv)
     pubScanPointer = nh->create_publisher<sensor_msgs::msg::PointCloud2>("/registered_scan",2);
 
     auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/Odometry",5,odometryHandle);
+    // auto subOdometry = nh->create_subscription<nav_msgs::msg::Odometry>("/map_to_odom",5,odometryHandle);
 
 
 
